@@ -117,8 +117,6 @@ html, body {
   box-shadow: 0 0 25px rgba(255,255,255,.25);
 }
 .cam-clip video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; z-index: 1; }
-canvas.guide { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
-.guide-accent { position: absolute; box-sizing: border-box; border: 2px solid #fff; background: transparent; pointer-events: none; z-index: 3; }
 .scan-beam {
   position: absolute; left: 0; top: 0; width: 100%; height: 2px; z-index: 4;
   background: #fff; box-shadow: 0 0 8px #fff; display: none;
@@ -185,8 +183,6 @@ canvas.guide { position: absolute; inset: 0; width: 100%; height: 100%; pointer-
     <div class="scanner-window" id="scannerWindow">
       <div class="cam-clip" id="camWrap">
         <video id="camVideo" autoplay playsinline muted></video>
-        <canvas id="guideCanvas" class="guide"></canvas>
-        <div id="guideAccent" class="guide-accent"></div>
         <div class="scan-beam"></div>
       </div>
       <div class="scanner-corner tl"></div>
@@ -207,12 +203,8 @@ canvas.guide { position: absolute; inset: 0; width: 100%; height: 100%; pointer-
 
 // Рамка-приціл: ширина рамки як частка меншої сторони вікна камери.
 // Рамка квадратна з заокругленими кутами.
-const GUIDE_WIDTH_RATIO = 0.598;
+const GUIDE_WIDTH_RATIO = 1.0;   // 1.0 = приціл це все вікно камери (внутрішньої рамки немає)
 const GUIDE_ASPECT_RATIO = 1.0;
-const GUIDE_CORNER_RADIUS_RATIO = 0.22;
-
-// Колір маски навколо рамки (збігається з кольором сторінки)
-const PAGE_BG_COLOR = '#0e2a47';
 
 // У скільки разів зона пошуку ширша за саму рамку (запас на неточне
 // наведення). Усе, що поза цією зоною, детектор ігнорує.
@@ -300,8 +292,7 @@ function getGuideGeometry(W, H) {
   if (guideH > maxH) guideH = maxH;
   const halfW = guideW / 2;
   const halfH = guideH / 2;
-  const r = Math.min(guideW, guideH) * GUIDE_CORNER_RADIUS_RATIO;
-  return { cx, cy, halfW, halfH, r };
+  return { cx, cy, halfW, halfH };
 }
 
 // Чи лежить точка (x, y) у зоні пошуку навколо рамки
@@ -309,91 +300,6 @@ function isInsideGuideRoi(x, y, W, H) {
   const g = getGuideGeometry(W, H);
   return Math.abs(x - g.cx) <= g.halfW * SCAN_ROI_MARGIN &&
          Math.abs(y - g.cy) <= g.halfH * SCAN_ROI_MARGIN;
-}
-
-// Контур прямокутника із заокругленими кутами
-function roundedRectPath(g, cx, cy, halfW, halfH, r) {
-  const x0 = cx - halfW;
-  const y0 = cy - halfH;
-  const x1 = cx + halfW;
-  const y1 = cy + halfH;
-  g.beginPath();
-  g.moveTo(x0 + r, y0);
-  g.lineTo(x1 - r, y0);
-  g.arcTo(x1, y0, x1, y0 + r, r);
-  g.lineTo(x1, y1 - r);
-  g.arcTo(x1, y1, x1 - r, y1, r);
-  g.lineTo(x0 + r, y1);
-  g.arcTo(x0, y1, x0, y1 - r, r);
-  g.lineTo(x0, y0 + r);
-  g.arcTo(x0, y0, x0 + r, y0, r);
-  g.closePath();
-}
-
-// Малює маску: усе залито кольором фону, а всередині рамки вирізано "вікно"
-function drawGuide(W, H) {
-  if (!W || !H) return;
-  const gc = document.getElementById('guideCanvas');
-  const dpr = window.devicePixelRatio || 1;
-  gc.width = W * dpr;
-  gc.height = H * dpr;
-  const g = gc.getContext('2d');
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.scale(dpr, dpr);
-  g.clearRect(0, 0, W, H);
-  const { cx, cy, halfW, halfH, r } = getGuideGeometry(W, H);
-
-  g.fillStyle = PAGE_BG_COLOR;
-  g.fillRect(0, 0, W, H);
-  g.globalCompositeOperation = 'destination-out';
-  g.fillStyle = '#000';
-  roundedRectPath(g, cx, cy, halfW, halfH, r);
-  g.fill();
-  g.globalCompositeOperation = 'source-over';
-}
-
-// Ставить білу контурну рамку точно по краю "вікна" маски
-function positionGuideAccent(W, H) {
-  if (!W || !H) return;
-  const accent = document.getElementById('guideAccent');
-  const { cx, cy, halfW, halfH, r } = getGuideGeometry(W, H);
-  accent.style.display = 'block';
-  accent.style.left = (cx - halfW) + 'px';
-  accent.style.top = (cy - halfH) + 'px';
-  accent.style.width = (halfW * 2) + 'px';
-  accent.style.height = (halfH * 2) + 'px';
-  accent.style.borderRadius = r + 'px';
-}
-
-// Перемальовуємо маску й рамку щоразу, коли змінився розмір вікна камери
-let guideResizeObserver = null;
-
-function watchGuideResize() {
-  const wrap = document.getElementById('camWrap');
-  if (guideResizeObserver) guideResizeObserver.disconnect();
-  guideResizeObserver = new ResizeObserver((entries) => {
-    for (const entry of entries) {
-      const w = entry.contentRect.width;
-      const h = entry.contentRect.height;
-      drawGuide(w, h);
-      positionGuideAccent(w, h);
-    }
-  });
-  guideResizeObserver.observe(wrap);
-}
-
-function unwatchGuideResize() {
-  if (guideResizeObserver) {
-    guideResizeObserver.disconnect();
-    guideResizeObserver = null;
-  }
-}
-
-// Прибирає маску й рамку (коли камеру вимкнено)
-function clearGuide() {
-  const gc = document.getElementById('guideCanvas');
-  gc.getContext('2d').clearRect(0, 0, gc.width, gc.height);
-  document.getElementById('guideAccent').style.display = 'none';
 }
 
 /* =====================================================================
@@ -652,7 +558,6 @@ async function startCamera() {
       t.addEventListener('ended', () => abortScan('Камеру вимкнено. Запусти сканування ще раз.'));
     });
 
-    watchGuideResize();
     scanTimer = setInterval(scanFrame, SCAN_INTERVAL_MS);
     return '';
   } catch (e) {
@@ -672,11 +577,9 @@ function teardownCamera() {
     clearInterval(scanTimer);
     scanTimer = null;
   }
-  unwatchGuideResize();
   const video = document.getElementById('camVideo');
   video.pause();
   video.srcObject = null;
-  clearGuide();
 }
 
 // Один крок циклу: центральний квадрат відео -> канвас -> детектор
