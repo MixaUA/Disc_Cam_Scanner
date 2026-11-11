@@ -78,8 +78,8 @@ html, body {
 /* Верхній слот: у ньому по черзі живуть текстова картка і вікно камери */
 .top-slot {
   position: absolute; left: 50%; transform: translateX(-50%);
-  top: calc(env(safe-area-inset-top, 0px) + 10vh);
-  width: min(340px, 90vw); height: 200px;
+  top: calc(env(safe-area-inset-top, 0px) + var(--slot-top, 40px));
+  width: min(340px, 90vw); height: var(--slot-h, 200px);
   display: grid; place-items: center;
   pointer-events: none; z-index: 5;
 }
@@ -90,12 +90,7 @@ html, body {
   background: rgba(14,42,71,.95);
   border: 1px dashed rgba(255,255,255,.4); border-radius: 4px;
   text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,.4);
-  transform-origin: center center;
-  transition: transform .5s cubic-bezier(.175,.885,.32,1.275), opacity .3s ease;
-}
-.info-card.collapsed {
-  transform: scale(0); opacity: 0;
-  transition: transform .4s cubic-bezier(.6,-.28,.735,.045), opacity .3s ease;
+  will-change: transform;
 }
 .info-title { font-size: 15px; font-weight: bold; letter-spacing: 2px; margin-bottom: 8px; text-transform: uppercase; }
 .info-code { font-size: 44px; line-height: 1.1; letter-spacing: 6px; padding-left: 6px; margin: 6px 0 10px; font-weight: bold; }
@@ -103,13 +98,8 @@ html, body {
 
 /* Вікно камери: 150 px, вдвічі менше за прототип */
 .scanner-window {
-  width: 150px; height: 150px; position: relative;
-  opacity: 0; transform: scale(0); transform-origin: center center;
-  transition: transform .4s cubic-bezier(.6,-.28,.735,.045), opacity .3s ease;
-}
-.scanner-window.active {
-  opacity: 1; transform: scale(1);
-  transition: transform .5s cubic-bezier(.175,.885,.32,1.275), opacity .3s ease;
+  width: var(--win, 150px); height: var(--win, 150px); position: relative;
+  transform: translateX(150vw); will-change: transform;
 }
 .cam-clip {
   position: absolute; inset: 0; overflow: hidden;
@@ -158,16 +148,23 @@ html, body {
 
   <div class="svg-wrapper">
     <svg id="gearSvg" viewBox="-310 -450 620 900">
+      <g class="axis-line fade-out" id="axisTop">
+        <line id="axT2" /><line id="axT3" />
+      </g>
       <g class="axis-line" id="axisGroup">
         <line x1="0" y1="250" x2="81.5" y2="290" />
         <line x1="0" y1="250" x2="-93" y2="301.5" />
       </g>
+      <path id="gearT2" class="blueprint-gear" />
+      <path id="gearT3" class="blueprint-gear" />
       <path id="gear2" class="blueprint-gear" />
       <path id="gear3" class="blueprint-gear" />
       <path id="gear1" class="blueprint-gear gear-main" tabindex="0" role="button" aria-label="Запустити сканування" />
       <g id="centersGroup" pointer-events="none">
         <circle cx="81.5" cy="290" r="2.5" class="center-circle" />
         <circle cx="-93" cy="301.5" r="2.5" class="center-circle" />
+        <circle id="centerT2" r="2.5" class="center-circle" />
+        <circle id="centerT3" r="2.5" class="center-circle" />
         <circle id="center1" cx="0" cy="250" r="2.5" class="center-circle" />
       </g>
     </svg>
@@ -631,34 +628,47 @@ function scanFrame() {
 
 
 /* =====================================================================
-   ІНТЕРФЕЙС: ШЕСТЕРНІ, КАРТКА, ПЕРЕХОДИ
-   Стани: idle (шестерня знизу, готово) -> launching (політ, колапс) ->
-   scanning (вікно камери) -> ending (вікно колапсує, картка з текстом,
-   шестерня вискакує знизу) -> idle
+   ІНТЕРФЕЙС: ШЕСТЕРНІ, СЛАЙДЕР, ПЕРЕХОДИ
+   Стани: idle (головна шестерня внизу, у зчепленні з нижньою парою) ->
+   launching (летить вгору, зчіплюється з верхньою парою, слайдер везе
+   поле вліво, камеру вправо) -> scanning -> returning (слайдер назад,
+   шестерня відскакує вниз і зчіплюється з нижньою парою) -> idle.
+   Зубці зчіплюються по-справжньому: кут головної шестерні при посадці
+   підганяється так, щоб зуби входили у западини сусідніх шестерень.
    ===================================================================== */
 
-const CONFIG = {
-  MODULE: 3.75,
-  ANIMATION_SPEED: 0.3,
-  GEAR_HOME_Y: 250,
-  gears: [
-    { id: 'gear1', teeth: 16, x: 0,    y: 250,   offset: 0,    speed: 1 },
-    { id: 'gear2', teeth: 8,  x: 81.5, y: 290,   offset: 22.5, speed: -2 },
-    { id: 'gear3', teeth: 12, x: -93,  y: 301.5, offset: 15,   speed: -1.333 }
-  ]
-};
-const VB = { y: -450, w: 620, h: 900 };   // має збігатися з viewBox у розмітці
+const GEAR_MODULE = 3.75;
+const MAIN_TEETH = 16, MAIN_PITCH = MAIN_TEETH * GEAR_MODULE, HOME_Y = 250;
+const TOOTH_STEP = 360 / MAIN_TEETH;       // 22.5 градуса: період зубців головної шестерні
+const IDLE_SPEED = 0.3, SCAN_SPEED = 0.6;  // градусів за кадр
+const SLIDE_ROT = 150;                     // на скільки градусів повертається шестерня за час слайду
+const VB = { y: -450, w: 620, h: 900 };    // має збігатися з viewBox у розмітці
+
+// Нижня пара (як було). offset - фаза зубців у зчепленні з головною шестернею внизу
+const BOTTOM = [
+  { id: 'gear2', teeth: 8,  x: 81.5, y: 290,   offset: 22.5 },
+  { id: 'gear3', teeth: 12, x: -93,  y: 301.5, offset: 15 }
+];
+// Верхня пара: дзеркальна, стоїть над головною шестернею, коли вона зверху.
+// x, y, offset рахуються в layout()
+const TOP = [
+  { id: 'gearT2', teeth: 8,  dx: 81.5, dy: -40,   axis: 'axT2', dot: 'centerT2' },
+  { id: 'gearT3', teeth: 12, dx: -93,  dy: -51.5, axis: 'axT3', dot: 'centerT3' }
+];
 
 let state = 'idle';
-let baseAngle = 0;
-let mainGearY = CONFIG.GEAR_HOME_Y;
-let mainGearScale = 1;
-let pointerDown = false;
-let pointerStartY = 0;
+let mainY = HOME_Y, mainA = 0;     // положення й кут головної шестерні
+let botA = 0, topA = 0;            // "ведучі кути" нижньої і верхньої пар
+let botShift = 0, topShift = 0;
+let bottomCoupled = true, topCoupled = false;
+let topLandY = -100;               // де головна шестерня стає під верхню пару
+let slideP = 0;                    // 0: видно поле, 1: видно камеру
+let pointerDown = false, pointerStartY = 0;
 
 const $ = (id) => document.getElementById(id);
 const gearSvg = $('gearSvg'), gear1 = $('gear1'), center1 = $('center1');
-const axisGroup = $('axisGroup'), infoCard = $('infoCard'), scannerWindow = $('scannerWindow');
+const axisBottom = $('axisGroup'), axisTop = $('axisTop');
+const infoCard = $('infoCard'), scannerWindow = $('scannerWindow');
 const topSlot = $('topSlot'), stage = $('stage');
 
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
@@ -673,18 +683,20 @@ function tween(ms, step) {
   });
 }
 const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
-const easeOutBack = (t) => { const c1 = 1.1, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+const easeInOut = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const easeOutBack = (t) => { const c1 = 0.45, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
 
-// Екранна координата Y -> координата Y у системі viewBox шестерень
-function screenYToSvg(y) {
-  const r = gearSvg.getBoundingClientRect();
-  const s = Math.min(r.width / VB.w, r.height / VB.h);
-  const offY = (r.height - VB.h * s) / 2;
-  return (y - r.top - offY) / s + VB.y;
-}
-function slotCenterSvgY() {
-  const r = topSlot.getBoundingClientRect();
-  return screenYToSvg(r.top + r.height / 2);
+// Найближчий кут, не менший за min (або не більший за max), що збігається з ref по зубцю
+const alignedUp = (min, ref) => ref + TOOTH_STEP * Math.ceil((min - ref) / TOOTH_STEP);
+const alignedDown = (max, ref) => ref + TOOTH_STEP * Math.floor((max - ref) / TOOTH_STEP);
+
+// Фаза зубців малої шестерні, щоб вона зчіплювалася з головною (кут 0)
+// у напрямку (dx, dy) від центра головної
+function meshOffset(teeth, dx, dy) {
+  const theta = Math.atan2(dy, dx) * 180 / Math.PI;
+  const off = ((MAIN_TEETH + teeth) * theta + 180 * teeth - 90) / teeth;
+  const period = 360 / teeth;
+  return ((off % period) + period) % period;
 }
 
 function generateGearPath(cx, cy, pitchRadius, module, teethCount, holeRadius) {
@@ -704,31 +716,78 @@ function generateGearPath(cx, cy, pitchRadius, module, teethCount, holeRadius) {
   const holePath = `M ${cx - holeRadius},${cy} A ${holeRadius},${holeRadius} 0 1,0 ${cx + holeRadius},${cy} A ${holeRadius},${holeRadius} 0 1,0 ${cx - holeRadius},${cy} Z`;
   return `${outerPath} ${holePath}`;
 }
+const setGearPath = (id, x, y, teeth) => {
+  const r = teeth * GEAR_MODULE;
+  $(id).setAttribute('d', generateGearPath(x, y, r, GEAR_MODULE, teeth, r * 0.35));
+};
 
-CONFIG.gears.forEach((g) => {
-  const pitchRadius = g.teeth * CONFIG.MODULE;
-  $(g.id).setAttribute('d', generateGearPath(g.x, g.y, pitchRadius, CONFIG.MODULE, g.teeth, pitchRadius * 0.35));
-});
+/* ---- Координати: екран <-> viewBox шестерень ---- */
+function svgMetrics() {
+  const r = gearSvg.getBoundingClientRect();
+  const s = Math.min(r.width / VB.w, r.height / VB.h);
+  return { r, s, offY: (r.height - VB.h * s) / 2 };
+}
+function screenYToSvg(y) {
+  const m = svgMetrics();
+  return (y - m.r.top - m.offY) / m.s + VB.y;
+}
 
-function updateGears() {
-  CONFIG.gears.forEach((g) => {
-    const angle = g.offset + baseAngle * g.speed;
-    const el = $(g.id);
-    if (g.id === 'gear1') {
-      // Масштаб і поворот навколо центра шестерні, а сам центр стоїть у (0, mainGearY)
-      el.setAttribute('transform', `translate(0 ${mainGearY}) scale(${mainGearScale}) rotate(${angle.toFixed(2)}) translate(0 ${-g.y})`);
-      center1.setAttribute('transform', `translate(0 ${mainGearY}) scale(${mainGearScale}) translate(0 ${-g.y})`);
-    } else {
-      el.setAttribute('transform', `rotate(${angle.toFixed(2)}, ${g.x}, ${g.y})`);
-    }
+/* ---- Слайдер: поле їде вліво, камера в'їжджає справа (p: 0 -> 1) ---- */
+function setSlide(p) {
+  slideP = p;
+  const off = window.innerWidth / 2 + 230;
+  infoCard.style.transform = `translateX(${(-p * off).toFixed(1)}px)`;
+  scannerWindow.style.transform = `translateX(${((1 - p) * off).toFixed(1)}px)`;
+}
+
+/* ---- Розкладка: верхній слот, розмір вікна, верхня пара шестерень ---- */
+function layout() {
+  const m = svgMetrics();
+  topSlot.style.setProperty('--slot-top', Math.max(10, Math.round(window.innerHeight * 0.05)) + 'px');
+  topSlot.style.setProperty('--slot-h', '200px');
+  // Слот не опускається нижче рівня, де головна шестерня ще не наїжджає на нижню пару
+  const yMax = m.r.top + m.offY + (78 - VB.y) * m.s;
+  const H = Math.max(120, Math.min(200, yMax - topSlot.getBoundingClientRect().top));
+  topSlot.style.setProperty('--slot-h', H + 'px');
+  topSlot.style.setProperty('--win', Math.min(150, H - 24) + 'px');
+
+  topLandY = screenYToSvg(topSlot.getBoundingClientRect().bottom) + 112;
+  TOP.forEach((g) => {
+    g.x = g.dx;
+    g.y = topLandY + g.dy;
+    g.offset = meshOffset(g.teeth, g.dx, g.dy);
+    setGearPath(g.id, g.x, g.y, g.teeth);
+    const ax = $(g.axis);
+    ax.setAttribute('x1', 0); ax.setAttribute('y1', topLandY);
+    ax.setAttribute('x2', g.x); ax.setAttribute('y2', g.y);
+    $(g.dot).setAttribute('cx', g.x); $(g.dot).setAttribute('cy', g.y);
+  });
+  if (topCoupled) mainY = topLandY;
+  setSlide(slideP);
+}
+
+/* ---- Малювання шестерень ---- */
+function render() {
+  gear1.setAttribute('transform', `translate(0 ${(mainY - HOME_Y).toFixed(2)}) rotate(${mainA.toFixed(2)} 0 ${HOME_Y})`);
+  center1.setAttribute('cy', mainY.toFixed(2));
+  BOTTOM.forEach((g) => {
+    const a = g.offset - (MAIN_TEETH / g.teeth) * botA;
+    $(g.id).setAttribute('transform', `rotate(${a.toFixed(2)} ${g.x} ${g.y})`);
+  });
+  TOP.forEach((g) => {
+    const a = g.offset - (MAIN_TEETH / g.teeth) * topA;
+    $(g.id).setAttribute('transform', `rotate(${a.toFixed(2)} ${g.x} ${g.y})`);
   });
 }
 
-(function animate() {
-  if (state === 'idle' && !pointerDown) baseAngle += CONFIG.ANIMATION_SPEED;
-  updateGears();
-  requestAnimationFrame(animate);
-})();
+function frame() {
+  if (state === 'idle' && !pointerDown) mainA += IDLE_SPEED;
+  else if (state === 'scanning') mainA += SCAN_SPEED;
+  if (bottomCoupled) botA = mainA - botShift;   // у зчепленні пара крутиться разом з головною
+  if (topCoupled) topA = mainA - topShift;
+  render();
+  requestAnimationFrame(frame);
+}
 
 function showCard(title, desc, code) {
   $('cardTitle').textContent = title;
@@ -736,99 +795,116 @@ function showCard(title, desc, code) {
   const c = $('cardCode');
   if (code) { c.textContent = code; c.hidden = false; } else { c.hidden = true; }
 }
-
-// Шестерня вискакує знизу екрана й стає на місце
-async function returnGear() {
-  const from = screenYToSvg(window.innerHeight) + 80;
-  mainGearY = from;
-  mainGearScale = 1;
-  gear1.style.opacity = '1';
-  center1.style.opacity = '1';
-  await tween(1000, (p) => {
-    mainGearY = from + (CONFIG.GEAR_HOME_Y - from) * easeOutBack(p);
-    baseAngle += (1 - p) * 6;
-  });
-  mainGearY = CONFIG.GEAR_HOME_Y;
-  axisGroup.classList.remove('fade-out');
+function setGearLabel() {
+  gear1.setAttribute('aria-label', state === 'scanning' ? 'Вимкнути камеру' : 'Запустити сканування');
 }
 
-// Кінець сеансу (результат, помилка або обрив): камера гасне, вікно
-// колапсує в центр, на його місці розгортається картка з текстом
-async function endSession(title, desc, code) {
-  if (state === 'ending') return;
-  state = 'ending';
-  scanning = false;
-  teardownCamera();
-  setStatus('');
-  scannerWindow.classList.remove('active');
-  await wait(450);
-  showCard(title, desc, code);
-  infoCard.classList.remove('collapsed');
-  await wait(450);
-  await returnGear();
-  state = 'idle';
-}
-
-function finishScan(code) {
-  endSession('Номер диска', 'Свайпни вгору або торкнися шестерні для нового сканування', code);
-}
-
-function abortScan(msg) {
-  if (state !== 'scanning') return;
-  endSession('Сканування перервано', msg);
-}
-
+/* ---- Запуск: шестерня летить угору, зчіплюється, слайдер везе камеру ---- */
 async function launch() {
   if (state !== 'idle') return;
   state = 'launching';
-  axisGroup.classList.add('fade-out');
+  bottomCoupled = false;                          // нижня пара зупиняється
+  axisBottom.classList.add('fade-out');
 
-  // Політ шестерні в центр верхнього слота
-  const from = mainGearY;
-  const target = slotCenterSvgY();
-  await tween(800, (p) => {
+  const y0 = mainY, a0 = mainA;
+  const aEnd = alignedUp(a0 + 300, topA);         // у фазі з верхньою парою
+  await tween(950, (p) => {
     const e = easeOutCubic(p);
-    mainGearY = from + (target - from) * e;
-    baseAngle += (1 - e) * 2;
+    mainY = y0 + (topLandY - y0) * e;
+    mainA = a0 + (aEnd - a0) * e;
   });
+  mainY = topLandY; mainA = aEnd;
+  topShift = mainA - topA;                        // зчеплення
+  topCoupled = true;
+  axisTop.classList.remove('fade-out');
 
-  // Картка колапсує в центр, потім шестерня колапсує в точку
-  infoCard.classList.add('collapsed');
-  await wait(350);
-  await tween(300, (p) => { mainGearScale = 1 - p; baseAngle += 4; });
-  mainGearScale = 0;
-  gear1.style.opacity = '0';
-  center1.style.opacity = '0';
-
-  // На її місці розгортається вікно камери
+  const a1 = mainA;
+  await tween(700, (p) => {                       // слайдер у такт обертанню
+    const e = easeInOut(p);
+    setSlide(e);
+    mainA = a1 + SLIDE_ROT * e;
+  });
+  setSlide(1);
   scannerWindow.classList.add('active');
+
   const err = await startCamera();
   if (err) { await endSession('Камера недоступна', err); return; }
 
   lastCode = null;
   streak = 0;
   state = 'scanning';
+  setGearLabel();
   scanning = true;
   setStatus('наведи диск у рамку');
 }
 
-/* ---- Керування: свайп угору або дотик до шестерні (миша, дотик, перо) ---- */
+/* ---- Кінець (результат, скасування, помилка): слайдер назад, шестерня
+        відскакує вниз і зчіплюється з нижньою парою ---- */
+async function endSession(title, desc, code) {
+  if (state === 'returning') return;
+  state = 'returning';
+  scanning = false;
+  teardownCamera();
+  setStatus('');
+  scannerWindow.classList.remove('active');
+  showCard(title, desc, code);                    // поле зараз за екраном
+
+  const p0 = slideP, a1 = mainA;
+  await tween(700, (p) => {
+    const e = easeInOut(p);
+    setSlide(p0 * (1 - e));
+    mainA = a1 - SLIDE_ROT * p0 * e;
+  });
+  setSlide(0);
+
+  topCoupled = false;                             // верхня пара зупиняється
+  axisTop.classList.add('fade-out');
+  const y0 = mainY, a0 = mainA;
+  const aEnd = alignedDown(a0 - 300, botA);       // у фазі з нижньою парою
+  await tween(1000, (p) => {
+    mainY = y0 + (HOME_Y - y0) * easeOutBack(p);
+    mainA = a0 + (aEnd - a0) * easeOutCubic(p);
+  });
+  mainY = HOME_Y; mainA = aEnd;
+  botShift = mainA - botA;                        // зчеплення внизу
+  bottomCoupled = true;
+  axisBottom.classList.remove('fade-out');
+  state = 'idle';
+  setGearLabel();
+}
+
+function finishScan(code) {
+  endSession('Номер диска', 'Свайпни вгору або торкнися шестерні для нового сканування', code);
+}
+function cancelScan() {
+  if (state !== 'scanning') return;
+  endSession('Система сканування', 'Свайпни вгору або торкнися шестерні для запуску');
+}
+function abortScan(msg) {
+  if (state !== 'scanning') return;
+  endSession('Сканування перервано', msg);
+}
+const toggleScan = () => { if (state === 'idle') launch(); else if (state === 'scanning') cancelScan(); };
+
+/* ---- Керування (миша, дотик, перо): угору запускає, униз вимикає ---- */
 stage.addEventListener('pointerdown', (e) => {
-  if (state !== 'idle') return;
+  if (state !== 'idle' && state !== 'scanning') return;
   pointerDown = true;
   pointerStartY = e.clientY;
 });
 window.addEventListener('pointermove', (e) => {
-  if (!pointerDown || state !== 'idle') return;
-  if (pointerStartY - e.clientY > 20) { pointerDown = false; launch(); }
+  if (!pointerDown) return;
+  const dy = e.clientY - pointerStartY;
+  if (state === 'idle' && dy < -20) { pointerDown = false; launch(); }
+  else if (state === 'scanning' && dy > 20) { pointerDown = false; cancelScan(); }
 });
 const releasePointer = () => { pointerDown = false; };
 window.addEventListener('pointerup', releasePointer);
 window.addEventListener('pointercancel', releasePointer);
 
-gear1.addEventListener('click', launch);
+gear1.addEventListener('click', toggleScan);
 gear1.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); launch(); }
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleScan(); }
 });
 
 /* ---- Камеру обов'язково відпускаємо, коли сторінку закрито чи згорнуто ---- */
@@ -837,6 +913,13 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) abortScan('Сторінку згорнуто, камеру вимкнено. Запусти сканування ще раз.');
 });
 window.addEventListener('pageshow', (e) => { if (e.persisted) location.reload(); });
+window.addEventListener('resize', layout);
+
+/* ---- Старт ---- */
+setGearPath('gear1', 0, HOME_Y, MAIN_TEETH);
+BOTTOM.forEach((g) => setGearPath(g.id, g.x, g.y, g.teeth));
+layout();
+requestAnimationFrame(frame);
 
 </script>
 </body>
