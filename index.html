@@ -106,11 +106,11 @@ html, body {
 .cam-clip video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; z-index: 1; }
 .scan-beam {
   position: absolute; left: 0; top: 0; width: 100%; height: 2px; z-index: 4;
-  background: #fff; box-shadow: 0 0 8px #fff; display: none;
+  background: #fff; box-shadow: 0 0 8px #fff; display: none; will-change: transform;
   animation: scan 2s infinite ease-in-out;
 }
 .scanner-window.active .scan-beam { display: block; }
-@keyframes scan { 0% { top: 0; } 50% { top: calc(100% - 2px); } 100% { top: 0; } }
+@keyframes scan { 0% { transform: translateY(0); } 50% { transform: translateY(calc(var(--win, 150px) - 4px)); } 100% { transform: translateY(0); } }
 
 .scanner-corner {
   position: absolute; width: 14px; height: 14px; border: 0 solid #fff; z-index: 5;
@@ -758,6 +758,7 @@ function detectDisc(imgData, W, H) {
 let worker = null;
 let workerMode = false;     // true: розпізнаємо у Worker
 let workerReady = false;    // OpenCV у Worker ініціалізовано
+let workerOffscreen = false; // Worker вміє малювати ImageBitmap у OffscreenCanvas
 let pending = null;         // кадр, що зараз у Worker: { id, resolve }
 let frameSeq = 0;
 
@@ -777,9 +778,13 @@ function workerMain() {
         self.postMessage({ type: 'fail', reason: 'cv не визначений' });
         return;
       }
+      let offscreenOk = false;
+      try {
+        offscreenOk = typeof OffscreenCanvas !== 'undefined' && !!new OffscreenCanvas(1, 1).getContext('2d');
+      } catch (err) { offscreenOk = false; }
       const markReady = function () {
         openCvReady = true;
-        self.postMessage({ type: 'ready' });
+        self.postMessage({ type: 'ready', offscreen: offscreenOk });
       };
       if (cv && typeof cv.then === 'function') {
         cv.then(function (resolved) { self.cv = resolved; markReady(); })
@@ -792,7 +797,18 @@ function workerMain() {
     if (m.type === 'frame') {
       let det;
       try {
-        det = detectDisc({ data: new Uint8ClampedArray(m.buf), width: m.size, height: m.size }, m.size, m.size);
+        let imgData;
+        if (m.bitmap) {
+          // Кадр прийшов як ImageBitmap: пікселі зчитуємо тут, а не на основному потоці
+          const oc = new OffscreenCanvas(m.size, m.size);
+          const ctx = oc.getContext('2d', { willReadFrequently: true });
+          ctx.drawImage(m.bitmap, 0, 0, m.bitmap.width, m.bitmap.height, 0, 0, m.size, m.size);
+          m.bitmap.close();
+          imgData = ctx.getImageData(0, 0, m.size, m.size);
+        } else {
+          imgData = { data: new Uint8ClampedArray(m.buf), width: m.size, height: m.size };
+        }
+        det = detectDisc(imgData, m.size, m.size);
       } catch (err) {
         det = { ok: false, reason: 'помилка розпізнавання' };
       }
@@ -825,6 +841,7 @@ function onWorkerMessage(e) {
   const m = e.data;
   if (m.type === 'ready') {
     workerReady = true;
+    workerOffscreen = !!m.offscreen;
     console.log('[Disc Scanner] OpenCV готовий (Worker).');
   } else if (m.type === 'fail') {
     console.error('[Disc Scanner] OpenCV у Worker не запустився:', m.reason);
@@ -842,6 +859,7 @@ function fallbackToMainThread() {
   fallbackStarted = true;
   workerMode = false;
   workerReady = false;
+  workerOffscreen = false;
   if (worker) { worker.terminate(); worker = null; }
   if (pending) {
     const p = pending;
@@ -857,10 +875,8 @@ function fallbackToMainThread() {
   document.head.appendChild(s);
 }
 
-// Розпізнавання одного кадру (Promise з результатом detectDisc)
-function runDetect(imgData, size) {
-  if (!workerMode) return Promise.resolve(detectDisc(imgData, size, size));
-  if (!workerReady) return Promise.resolve({ ok: false, reason: 'OpenCV ще завантажується...' });
+// Відправка кадру у Worker (Promise з результатом detectDisc)
+function sendFrame(msg, transfer) {
   return new Promise((resolve) => {
     const id = ++frameSeq;
     const timer = setTimeout(() => {
@@ -870,10 +886,27 @@ function runDetect(imgData, size) {
       }
     }, 8000);
     pending = { id, resolve: (det) => { clearTimeout(timer); resolve(det); } };
-    // Буфер передається у Worker без копіювання
-    worker.postMessage({ type: 'frame', id: id, size: size, buf: imgData.data.buffer }, [imgData.data.buffer]);
+    worker.postMessage(Object.assign({ type: 'frame', id: id }, msg), transfer);
   });
 }
+
+// Шлях 1: готові пікселі (запасний, якщо браузер не вміє ImageBitmap у Worker)
+function runDetect(imgData, size) {
+  if (!workerMode) return Promise.resolve(detectDisc(imgData, size, size));
+  if (!workerReady) return Promise.resolve({ ok: false, reason: 'OpenCV ще завантажується...' });
+  return sendFrame({ size: size, buf: imgData.data.buffer }, [imgData.data.buffer]);
+}
+
+// Шлях 2: ImageBitmap (основний потік пікселів не торкається)
+function runDetectBitmap(bitmap, size) {
+  if (!workerMode || !workerReady) {
+    bitmap.close();
+    return Promise.resolve({ ok: false, reason: 'OpenCV ще завантажується...' });
+  }
+  return sendFrame({ size: size, bitmap: bitmap }, [bitmap]);
+}
+
+const canUseBitmap = () => workerMode && workerReady && workerOffscreen && typeof createImageBitmap === 'function';
 
 /* =====================================================================
    КАМЕРА І ЦИКЛ КАДРІВ
@@ -967,16 +1000,36 @@ async function scanOnce(tok) {
   const sx = (vw - sSize) / 2;
   const sy = (vh - sSize) / 2;
 
-  if (!scanCanvas) {
-    scanCanvas = document.createElement('canvas');
-    scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
-  }
-  scanCanvas.width = size;
-  scanCanvas.height = size;
-  scanCtx.drawImage(video, sx, sy, sSize, sSize, 0, 0, size, size);
-  const imgData = scanCtx.getImageData(0, 0, size, size);
+  let det = null;
 
-  const det = await runDetect(imgData, size);
+  // Основний шлях: браузер сам вирізає і стискає центральний квадрат
+  // поза основним потоком, а пікселі зчитує Worker
+  if (canUseBitmap()) {
+    let bmp = null;
+    try {
+      bmp = await createImageBitmap(video, sx, sy, sSize, sSize,
+        { resizeWidth: size, resizeHeight: size, resizeQuality: 'medium' });
+    } catch (e) {
+      bmp = null;
+    }
+    if (bmp) {
+      if (tok !== scanToken || !scanning) { bmp.close(); return; }
+      det = await runDetectBitmap(bmp, size);
+    }
+  }
+
+  // Запасний шлях: канвас на основному потоці
+  if (!det) {
+    if (!scanCanvas) {
+      scanCanvas = document.createElement('canvas');
+      scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    scanCanvas.width = size;
+    scanCanvas.height = size;
+    scanCtx.drawImage(video, sx, sy, sSize, sSize, 0, 0, size, size);
+    const imgData = scanCtx.getImageData(0, 0, size, size);
+    det = await runDetect(imgData, size);
+  }
   if (tok !== scanToken || !scanning) return;     // поки чекали, сканування могли зупинити
 
   // Не розпізнано: скидаємо лічильник і показуємо, на чому застрягли
