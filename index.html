@@ -2,7 +2,7 @@
 <html lang="uk">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Сканер кулачкових дисків</title>
 
 <script>
@@ -46,124 +46,150 @@
 <script async src="opencv.js" onload="onOpenCvScriptLoaded();" onerror="onOpenCvScriptError(event);" type="text/javascript"></script>
 
 <style>
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
-html,
-body {
-  overflow-x: hidden;
-  width: 100%;
+html, body {
+  margin: 0; padding: 0; width: 100%; height: 100%;
+  overflow: hidden; overscroll-behavior: none;
+  background: #0e2a47; color: #fff;
+  font-family: 'Courier New', Courier, monospace;
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
-body {
-  margin: 0;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  background: #ffffff;
-  font-family: sans-serif;
-  color: #3b2a1e;
-  padding: 28px 12px 40px;
+.stage { position: fixed; inset: 0; touch-action: none; }
+.grid-bg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+.svg-wrapper {
+  position: absolute; top: 0; bottom: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 100%; max-width: 600px;
+}
+.svg-wrapper svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 0 1px rgba(255,255,255,.6)); }
+
+.blueprint-gear { fill: rgba(14,42,71,.85); stroke: #fff; stroke-width: 1.5; stroke-linejoin: round; }
+.gear-main { cursor: pointer; outline: none; }
+.gear-main:focus-visible { stroke-width: 3.5; }
+.axis-line { stroke: rgba(255,255,255,.35); stroke-width: .8; stroke-dasharray: 6 3 1 3; transition: opacity .3s ease; }
+.center-circle { fill: #fff; stroke: rgba(255,255,255,.6); stroke-width: .8; }
+.fade-out { opacity: 0 !important; }
+
+/* Верхній слот: у ньому по черзі живуть текстова картка і вікно камери */
+.top-slot {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  top: calc(env(safe-area-inset-top, 0px) + var(--slot-top, 40px));
+  width: min(340px, 90vw); height: var(--slot-h, 200px);
+  display: grid; place-items: center;
+  pointer-events: none; z-index: 5;
+}
+.top-slot > * { grid-area: 1 / 1; }
+
+.info-card {
+  width: 100%; padding: 18px;
+  background: rgba(14,42,71,.95);
+  border: 1px dashed rgba(255,255,255,.4); border-radius: 4px;
+  text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,.4);
+  will-change: transform;
+}
+.info-title { font-size: 15px; font-weight: bold; letter-spacing: 2px; margin-bottom: 8px; text-transform: uppercase; }
+.info-code { font-size: 44px; line-height: 1.1; letter-spacing: 6px; padding-left: 6px; margin: 6px 0 10px; font-weight: bold; }
+.info-desc { font-size: 11px; color: rgba(255,255,255,.7); line-height: 1.4; }
+
+/* Вікно камери: 150 px, вдвічі менше за прототип */
+.scanner-window {
+  width: var(--win, 150px); height: var(--win, 150px); position: relative;
+  transform: translateX(150vw); will-change: transform;
+}
+.cam-clip {
+  position: absolute; inset: 0; overflow: hidden;
+  background: #0e2a47; border: 1px solid rgba(255,255,255,.5);
+  box-shadow: 0 0 25px rgba(255,255,255,.25);
+}
+.cam-clip video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; z-index: 1; }
+.scan-beam {
+  position: absolute; left: 0; top: 0; width: 100%; height: 2px; z-index: 4;
+  background: #fff; box-shadow: 0 0 8px #fff; display: none;
+  animation: scan 2s infinite ease-in-out;
+}
+.scanner-window.active .scan-beam { display: block; }
+@keyframes scan { 0% { top: 0; } 50% { top: calc(100% - 2px); } 100% { top: 0; } }
+
+.scanner-corner { position: absolute; width: 14px; height: 14px; border: 0 solid #fff; z-index: 5; }
+.tl { top: -4px; left: -4px; border-width: 3px 0 0 3px; }
+.tr { top: -4px; right: -4px; border-width: 3px 3px 0 0; }
+.bl { bottom: -4px; left: -4px; border-width: 0 0 3px 3px; }
+.br { bottom: -4px; right: -4px; border-width: 0 3px 3px 0; }
+
+.status {
+  align-self: end; justify-self: center; width: 100%; min-height: 14px;
+  text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 10px; letter-spacing: 1px; color: rgba(255,255,255,.55);
 }
 
-/* Вікно камери: квадрат, у якому живуть відео, маска прицілу й рамка */
-.scan-overlay {
-  position: relative;
-  width: 100%;
-  max-width: 340px;
-  aspect-ratio: 1 / 1;
-  margin: 0 auto;
-  border-radius: 12px;
-  overflow: hidden;
-  background: #ffffff;
-}
-
-/* Відео заповнює квадрат, зайве обрізається по центру (object-fit: cover) */
-video {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  z-index: 1;
-}
-
-/* Маска: заливає все навколо рамки-прицілу кольором фону */
-canvas.guide {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 2;
-}
-
-/* Біла контурна рамка-приціл; розмір і положення виставляє скрипт */
-.guide-accent {
-  position: absolute;
-  box-sizing: border-box;
-  border: 2px solid #3b2a1e;
-  background: transparent;
-  pointer-events: none;
-  z-index: 3;
-}
-
-/* Сюди виводиться стан сканування, а далі - назва кулачка та його властивості */
-.result-panel {
-  width: 100%;
-  padding: 24px 20px;
-  max-width: 320px;
-  margin: 0 auto;
-  text-align: center;
-}
-
-.field-value {
-  color: rgba(59, 42, 30, 0.8);
-  font-family: monospace;
-  font-size: 15px;
-  line-height: 1.7;
-  font-style: italic;
-}
-
-/* Кнопка "Сканувати" під вікном камери */
-.scan-btn {
-  margin-top: 20px;
-  padding: 12px 28px;
-  background: #3b2a1e;
-  color: #ffffff;
-  border: none;
-  border-radius: 6px;
-  font-family: inherit;
-  font-size: 16px;
-  cursor: pointer;
-}
-
-.scan-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* Коли диск розпізнано, номер виводиться великим, прямим шрифтом */
-.field-value.result {
-  font-size: 48px;
-  font-style: normal;
-  letter-spacing: 4px;
-  color: #3b2a1e;
-}
-
+@media (prefers-reduced-motion: reduce) { .scan-beam { animation: none; top: 50%; } }
 </style>
 </head>
 <body>
 
-<div class="scan-overlay" id="camWrap">
-  <video id="camVideo" autoplay playsinline muted></video>
-  <canvas id="guideCanvas" class="guide"></canvas>
-  <div id="guideAccent" class="guide-accent"></div>
-</div>
+<div class="stage" id="stage">
+  <svg class="grid-bg" aria-hidden="true">
+    <defs>
+      <pattern id="smallGrid" width="10" height="10" patternUnits="userSpaceOnUse">
+        <path d="M 10 0 L 0 0 0 10" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="0.5" />
+      </pattern>
+      <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
+        <rect width="50" height="50" fill="url(#smallGrid)" />
+        <path d="M 50 0 L 0 0 0 50" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1" />
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#grid)" />
+  </svg>
 
-<button type="button" class="scan-btn" id="scanBtn">Сканувати</button>
+  <div class="svg-wrapper">
+    <svg id="gearSvg" viewBox="-310 -450 620 900">
+      <g class="axis-line fade-out" id="axisTop">
+        <line id="axT2" /><line id="axT3" />
+      </g>
+      <g class="axis-line" id="axisGroup">
+        <line x1="0" y1="250" x2="81.5" y2="290" />
+        <line x1="0" y1="250" x2="-93" y2="301.5" />
+      </g>
+      <path id="gearT2" class="blueprint-gear" />
+      <path id="gearT3" class="blueprint-gear" />
+      <path id="gear2" class="blueprint-gear" />
+      <path id="gear3" class="blueprint-gear" />
+      <path id="gear1" class="blueprint-gear gear-main" tabindex="0" role="button" aria-label="Запустити сканування" />
+      <g id="centersGroup" pointer-events="none">
+        <circle cx="81.5" cy="290" r="2.5" class="center-circle" />
+        <circle cx="-93" cy="301.5" r="2.5" class="center-circle" />
+        <circle id="centerT2" r="2.5" class="center-circle" />
+        <circle id="centerT3" r="2.5" class="center-circle" />
+        <circle id="center1" cx="0" cy="250" r="2.5" class="center-circle" />
+      </g>
+    </svg>
+  </div>
 
-<div class="result-panel">
-  <span class="field-value" id="msgText"></span>
+  <div class="top-slot" id="topSlot">
+    <div class="info-card" id="infoCard" aria-live="polite">
+      <div class="info-title" id="cardTitle">Система сканування</div>
+      <div class="info-code" id="cardCode" hidden></div>
+      <div class="info-desc" id="cardDesc">Свайпни вгору або торкнися шестерні для запуску</div>
+    </div>
+
+    <div class="scanner-window" id="scannerWindow">
+      <div class="cam-clip" id="camWrap">
+        <video id="camVideo" autoplay playsinline muted></video>
+        <div class="scan-beam"></div>
+      </div>
+      <div class="scanner-corner tl"></div>
+      <div class="scanner-corner tr"></div>
+      <div class="scanner-corner bl"></div>
+      <div class="scanner-corner br"></div>
+    </div>
+
+    <div class="status" id="msgText"></div>
+  </div>
 </div>
 
 <script>
@@ -174,12 +200,8 @@ canvas.guide {
 
 // Рамка-приціл: ширина рамки як частка меншої сторони вікна камери.
 // Рамка квадратна з заокругленими кутами.
-const GUIDE_WIDTH_RATIO = 0.598;
+const GUIDE_WIDTH_RATIO = 1.0;   // 1.0 = приціл це все вікно камери (внутрішньої рамки немає)
 const GUIDE_ASPECT_RATIO = 1.0;
-const GUIDE_CORNER_RADIUS_RATIO = 0.22;
-
-// Колір маски навколо рамки (збігається з кольором сторінки)
-const PAGE_BG_COLOR = '#ffffff';
 
 // У скільки разів зона пошуку ширша за саму рамку (запас на неточне
 // наведення). Усе, що поза цією зоною, детектор ігнорує.
@@ -199,22 +221,12 @@ const SQUARE_RATIO = 0.5;
 
 /* ---- Пошук диска й квадратного вирізу ---- */
 
-// Найменша площа диска як частка площі кадру. 0.007 це диск шириною близько
-// 9% кадру (за тестами на такому розмірі читання ще надійне). Менші диски
-// ігноруються: на них ямки замалі, і зростає ризик прочитати хибний код.
-const MIN_DISC_AREA_FRACTION = 0.007;
+// Найменша площа диска в кадрі (px²). 4000 це диск приблизно 70 px у діаметрі
+const MIN_DISC_AREA = 4000;
 
-// Площа вирізу до площі контуру навколо нього: за геометрією це близько 0.08.
-// Нижня межа низька навмисно: якщо до диска прилягає чужа графіка, контур
-// навколо вирізу стає більшим за диск, а виріз лишається тим самим.
-const HOLE_AREA_RATIO_MIN = 0.02;
+// Площа вирізу до площі диска: за геометрією це близько 0.08
+const HOLE_AREA_RATIO_MIN = 0.04;
 const HOLE_AREA_RATIO_MAX = 0.16;
-
-// Кандидат у виріз: його площа як частка площі кадру і мінімальне заповнення
-// описаного прямокутника (квадрат, навіть повернутий на 45°, заповнює не менше 0.5)
-const HOLE_MIN_AREA_FRACTION = 0.0004;
-const HOLE_MAX_AREA_FRACTION = 0.05;
-const HOLE_MIN_FILL = 0.4;
 
 // Точність спрощення контуру вирізу до 4 кутів (частка периметра)
 const HOLE_APPROX_EPS = 0.04;
@@ -224,9 +236,7 @@ const HOLE_APPROX_EPS = 0.04;
 // Диск вирівнюється за кутами квадрата в "вигляд спереду": радіус диска
 // стає DST_R пікселів, сторона квадрата - DST_R * SQUARE_RATIO.
 const DST_R = 200;
-// Зображення вирівняного диска з запасом навколо (променями йдемо до 1.35 радіуса),
-// щоб було видно, чи не прилягає до диска щось зайве
-const DST_SIZE = Math.ceil(DST_R * 2 * 1.35);
+const DST_SIZE = DST_R * 2 + 40;
 
 // З якого радіуса (частка DST_R) йдемо від центра назовні. Це має бути
 // всередині матеріалу: далі від кутів вирізу (0.35) і ближче за дно ямки (0.81).
@@ -240,17 +250,9 @@ const PIT_THRESHOLD = 0.93;
 // у межах цієї частки (перевірка, що виріз справді належить такому диску)
 const RADIUS_CHECK_TOL = 0.1;
 
-// Форма справжньої ямки (виміряно на тестових кадрах: ширина 15-21°, глибина
-// 0.80-0.87, зсув мінімуму від середини до 1.5°). Ямка, що виходить за ці межі,
-// ймовірно, частково закрита чужою графікою, і її центр не можна брати для коду.
-// Ширина ямки на порозі, у градусах:
-const MIN_PIT_WIDTH_DEG = 14;
-const MAX_PIT_WIDTH_DEG = 26;
-// Глибина: найменший радіус ямки до звичайного радіуса
-const PIT_DEPTH_MIN = 0.74;
-const PIT_DEPTH_MAX = 0.88;
-// На скільки градусів найглибша точка може відхилятися від середини ямки
-const PIT_SYMMETRY_TOL_DEG = 3;
+// Допустима ширина знайденої ямки на порозі, у градусах (номінально ~20)
+const MIN_PIT_WIDTH_DEG = 8;
+const MAX_PIT_WIDTH_DEG = 40;
 
 // Проміжки між ямками округлюються до кроку 10°. Якщо виміряний проміжок
 // відрізняється від найближчого кроку більше ніж на це, кадр відкидається.
@@ -264,52 +266,12 @@ const CONFIRM_STREAK = 3;
 // Як часто аналізуємо кадр (мс): 200 = 5 кадрів на секунду
 const SCAN_INTERVAL_MS = 200;
 
-// Максимальний розмір кадру для аналізу в пікселях. Чим більший кадр, тим
-// дрібніші ямки видно, а отже диск можна тримати далі від екрана.
-const MAX_FRAME_SIZE = 960;
-
-// Розмір ядра розмиття (непарне число). Менше розмиття лишає дрібні ямки чіткішими.
-const BLUR_SIZE = 3;
-
-// Крок уздовж променя при вимірюванні радіуса, у пікселях (менше за піксель:
-// межа диска знаходиться з точністю до частки пікселя)
-const PROFILE_STEP = 0.5;
-
-// Якщо десь радіус перевищує звичайний більше ніж на цю частку, до диска в цьому
-// напрямку щось прилягає (чужа графіка, рука). Такі кути вважаються "забрудненими":
-// їм не довіряємо, а решту диска читаємо як звичайно.
-const ATTACH_TOL = 0.15;
-
-// Якщо забруднена більша частина кола (у градусах із 360), диск не читаємо
-const MAX_DIRTY_DEG = 150;
-
-
-// Звичайний радіус диска береться як медіана в такому околі кожного кута
-// (у градусах в обидва боки). Окіл ширший за ямку, тому ямки на медіану не
-// впливають, а повільні спотворення форми (неточне вирівнювання, об'єктив)
-// медіана повторює, і вони не вважаються ямками.
-const BASELINE_HALF_WINDOW_DEG = 70;
-
-// Скільки найближчих до центра прицілу кандидатів перевіряємо за кадр
-const MAX_CANDIDATES = 4;
+// Максимальний розмір кадру для аналізу в пікселях
+const MAX_FRAME_SIZE = 640;
 
 /* =====================================================================
    ДОПОМІЖНІ ФУНКЦІЇ
    ===================================================================== */
-
-// Виводить службовий стан у панель під камерою (дрібним курсивом)
-function setStatus(text) {
-  const el = document.getElementById('msgText');
-  el.textContent = text;
-  el.classList.remove('result');
-}
-
-// Виводить розпізнаний номер диска (великим шрифтом)
-function setResult(text) {
-  const el = document.getElementById('msgText');
-  el.textContent = text;
-  el.classList.add('result');
-}
 
 /* =====================================================================
    РАМКА-ПРИЦІЛ
@@ -327,8 +289,7 @@ function getGuideGeometry(W, H) {
   if (guideH > maxH) guideH = maxH;
   const halfW = guideW / 2;
   const halfH = guideH / 2;
-  const r = Math.min(guideW, guideH) * GUIDE_CORNER_RADIUS_RATIO;
-  return { cx, cy, halfW, halfH, r };
+  return { cx, cy, halfW, halfH };
 }
 
 // Чи лежить точка (x, y) у зоні пошуку навколо рамки
@@ -336,91 +297,6 @@ function isInsideGuideRoi(x, y, W, H) {
   const g = getGuideGeometry(W, H);
   return Math.abs(x - g.cx) <= g.halfW * SCAN_ROI_MARGIN &&
          Math.abs(y - g.cy) <= g.halfH * SCAN_ROI_MARGIN;
-}
-
-// Контур прямокутника із заокругленими кутами
-function roundedRectPath(g, cx, cy, halfW, halfH, r) {
-  const x0 = cx - halfW;
-  const y0 = cy - halfH;
-  const x1 = cx + halfW;
-  const y1 = cy + halfH;
-  g.beginPath();
-  g.moveTo(x0 + r, y0);
-  g.lineTo(x1 - r, y0);
-  g.arcTo(x1, y0, x1, y0 + r, r);
-  g.lineTo(x1, y1 - r);
-  g.arcTo(x1, y1, x1 - r, y1, r);
-  g.lineTo(x0 + r, y1);
-  g.arcTo(x0, y1, x0, y1 - r, r);
-  g.lineTo(x0, y0 + r);
-  g.arcTo(x0, y0, x0 + r, y0, r);
-  g.closePath();
-}
-
-// Малює маску: усе залито кольором фону, а всередині рамки вирізано "вікно"
-function drawGuide(W, H) {
-  if (!W || !H) return;
-  const gc = document.getElementById('guideCanvas');
-  const dpr = window.devicePixelRatio || 1;
-  gc.width = W * dpr;
-  gc.height = H * dpr;
-  const g = gc.getContext('2d');
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.scale(dpr, dpr);
-  g.clearRect(0, 0, W, H);
-  const { cx, cy, halfW, halfH, r } = getGuideGeometry(W, H);
-
-  g.fillStyle = PAGE_BG_COLOR;
-  g.fillRect(0, 0, W, H);
-  g.globalCompositeOperation = 'destination-out';
-  g.fillStyle = '#000';
-  roundedRectPath(g, cx, cy, halfW, halfH, r);
-  g.fill();
-  g.globalCompositeOperation = 'source-over';
-}
-
-// Ставить білу контурну рамку точно по краю "вікна" маски
-function positionGuideAccent(W, H) {
-  if (!W || !H) return;
-  const accent = document.getElementById('guideAccent');
-  const { cx, cy, halfW, halfH, r } = getGuideGeometry(W, H);
-  accent.style.display = 'block';
-  accent.style.left = (cx - halfW) + 'px';
-  accent.style.top = (cy - halfH) + 'px';
-  accent.style.width = (halfW * 2) + 'px';
-  accent.style.height = (halfH * 2) + 'px';
-  accent.style.borderRadius = r + 'px';
-}
-
-// Перемальовуємо маску й рамку щоразу, коли змінився розмір вікна камери
-let guideResizeObserver = null;
-
-function watchGuideResize() {
-  const wrap = document.getElementById('camWrap');
-  if (guideResizeObserver) guideResizeObserver.disconnect();
-  guideResizeObserver = new ResizeObserver((entries) => {
-    for (const entry of entries) {
-      const w = entry.contentRect.width;
-      const h = entry.contentRect.height;
-      drawGuide(w, h);
-      positionGuideAccent(w, h);
-    }
-  });
-  guideResizeObserver.observe(wrap);
-}
-
-function unwatchGuideResize() {
-  if (guideResizeObserver) {
-    guideResizeObserver.disconnect();
-    guideResizeObserver = null;
-  }
-}
-
-// Прибирає маску й рамку (коли камеру вимкнено)
-function clearGuide() {
-  const gc = document.getElementById('guideCanvas');
-  gc.getContext('2d').clearRect(0, 0, gc.width, gc.height);
-  document.getElementById('guideAccent').style.display = 'none';
 }
 
 /* =====================================================================
@@ -468,131 +344,74 @@ const DISC_CODE_BY_KEY = buildDiscCodeTable();
 /* =====================================================================
    ДЕТЕКТОР
    Кроки:
-   1. Сірий, легке розмиття. Поріг Оцу рахується лише по зоні прицілу, тож
-      чужа графіка за її межами не впливає на вибір порога. Для великої
-      суцільної фігури це надійніше за adaptiveThreshold, який у середині
-      рівної заливки не бачить жодних країв.
-   2. findContours з ієрархією. Диск шукається за своїм квадратним вирізом:
-      це контур-дірка, схожа на квадрат, у зоні прицілу. Так чужа графіка,
-      що злилася з диском, не заважає знайти його. Кандидати йдуть від
-      найближчого до центра прицілу, тож коли в кадрі кілька дисків,
-      читається той, на який навели.
-   3. Виріз має бути чотирикутником. За його 4 кутами диск вирівнюється
-      у вигляд спереду (perspective).
-   4. Від центра йдемо променями по колу й знаходимо радіус краю диска для
-      кожного градуса (з точністю до частки пікселя). Де радіус помітно
-      менший, там ямка. Де радіус більший за звичайний, до диска прилягає
-      чужа графіка: такі кути ігноруються, решта диска читається.
+   1. Сірий, легке розмиття, поріг Оцу: диск (темний) стає білим на чорному.
+      Для великої суцільної фігури це надійніше за adaptiveThreshold,
+      який у середині рівної заливки не бачить жодних країв.
+   2. findContours з ієрархією: диск = найбільший зовнішній контур у рамці,
+      його внутрішній контур = порожній квадратний виріз.
+   3. Виріз спрощується до 4 кутів. За ними диск вирівнюється у вигляд
+      спереду (perspective), тож нахил камери не заважає.
+   4. Від центра йдемо променями по колу й знаходимо радіус краю диска
+      для кожного градуса. Де радіус помітно менший - ямка.
    5. Проміжки між 4 ямками округлюються до 10°, з них відбиток і код.
    Усі матриці OpenCV створюються тут і звільняються в finally.
    ===================================================================== */
 
-// Уточнює кути квадратного вирізу до часток пікселя.
-// Чому це важливо: вирівнювання диска будується лише за цим невеликим квадратом,
-// а диск удвічі більший. Помилка в 1-2 пікселі в кутах квадрата на краю диска
-// виростає в кілька відсотків і спотворює профіль радіуса. Тому замість вершин
-// approxPolyDP беремо точки контуру вздовж кожної з 4 сторін (без країв біля
-// кутів, де контур заокруглений розмиттям), проводимо через них пряму методом
-// найменших квадратів, а кути знаходимо як перетин сусідніх прямих.
-// Повертає 4 точки або null, якщо щось пішло не так (тоді лишаються вершини approxPolyDP).
-function refineSquareCorners(contourMat, verts) {
-  const pts = contourMat.data32S;              // x0, y0, x1, y1, ...
-  const total = pts.length / 2;
-  if (total < 16) return null;
+function detectDisc(imgData, W, H) {
+  if (!openCvReady) return { ok: false, reason: 'OpenCV ще завантажується...' };
 
-  // Індекс точки контуру, найближчої до кожної вершини
-  const idx = verts.map(v => {
-    let best = 0;
-    let bestD = Infinity;
-    for (let i = 0; i < total; i++) {
-      const dx = pts[i * 2] - v.x;
-      const dy = pts[i * 2 + 1] - v.y;
-      const d = dx * dx + dy * dy;
-      if (d < bestD) { bestD = d; best = i; }
-    }
-    return best;
-  });
+  let src, gray, blur, bin, contours, hierarchy, approx, srcTri, dstTri, M, warped;
+  const contourMats = [];
 
-  // Вершини мають йти по контуру одним колом: сума довжин сторін = весь контур
-  let sum = 0;
-  for (let k = 0; k < 4; k++) sum += (idx[(k + 1) % 4] - idx[k] + total) % total;
-  if (sum !== total) return null;
-
-  // Пряма для кожної сторони
-  const lines = [];
-  for (let k = 0; k < 4; k++) {
-    const a = idx[k];
-    const len = (idx[(k + 1) % 4] - a + total) % total;
-    const from = Math.floor(len * 0.2);
-    const to = Math.ceil(len * 0.8);
-    let n = 0, mx = 0, my = 0;
-    for (let j = from; j <= to; j++) {
-      const i = (a + j) % total;
-      mx += pts[i * 2]; my += pts[i * 2 + 1]; n++;
-    }
-    if (n < 4) return null;
-    mx /= n; my /= n;
-    let sxx = 0, sxy = 0, syy = 0;
-    for (let j = from; j <= to; j++) {
-      const i = (a + j) % total;
-      const dx = pts[i * 2] - mx;
-      const dy = pts[i * 2 + 1] - my;
-      sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
-    }
-    const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy);    // напрям прямої (головна вісь точок)
-    lines.push({ x: mx, y: my, vx: Math.cos(ang), vy: Math.sin(ang) });
-  }
-
-  // Кут k = перетин прямої (k-1) і прямої k
-  const corners = [];
-  for (let k = 0; k < 4; k++) {
-    const l1 = lines[(k + 3) % 4];
-    const l2 = lines[k];
-    const det = -l1.vx * l2.vy + l2.vx * l1.vy;
-    if (Math.abs(det) < 1e-6) return null;               // сторони майже паралельні
-    const dx = l2.x - l1.x;
-    const dy = l2.y - l1.y;
-    const t = (-dx * l2.vy + l2.vx * dy) / det;
-    const cx = l1.x + t * l1.vx;
-    const cy = l1.y + t * l1.vy;
-    // Захист: уточнений кут не може відлітати далеко від вершини approxPolyDP
-    if (Math.hypot(cx - verts[k].x, cy - verts[k].y) > 6) return null;
-    corners.push({ x: cx, y: cy });
-  }
-  return corners;
-}
-
-// Місцевий звичайний радіус для кожного кута: медіана радіусів в околі цього кута.
-// Кути з dirty[i] = true (там до диска щось прилягає) у медіану не беруться.
-function localBaseline(radii, dirty, fallback) {
-  const base = new Array(360);
-  for (let deg = 0; deg < 360; deg++) {
-    const win = [];
-    for (let j = -BASELINE_HALF_WINDOW_DEG; j <= BASELINE_HALF_WINDOW_DEG; j++) {
-      const k = (deg + j + 360) % 360;
-      if (radii[k] > 0 && !dirty[k]) win.push(radii[k]);
-    }
-    if (win.length < 15) { base[deg] = fallback; continue; }   // замало чистих кутів поруч
-    win.sort((p, q) => p - q);
-    base[deg] = win[Math.floor(win.length / 2)];
-  }
-  return base;
-}
-
-// Читає код диска за його квадратним вирізом (holeIdx). parentIdx - контур навколо
-// вирізу. Повертає { ok, code } або { ok: false, reason }. Коли виріз підтверджено
-// квадратом, ставить info.isDisc = true.
-function decodeCandidate(blur, level, contourMats, holeIdx, parentIdx, info) {
-  let approx, srcTri, dstTri, M, warped;
   try {
-    const holeArea = cv.contourArea(contourMats[holeIdx]);
-    const parentArea = cv.contourArea(contourMats[parentIdx]);
-    const holeRatio = holeArea / parentArea;
+    // ---- 1. Бінаризація ----
+    src = cv.matFromImageData(imgData);
+    gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    blur = new cv.Mat();
+    cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
+    bin = new cv.Mat();
+    cv.threshold(blur, bin, 0, 255, cv.THRESH_BINARY_INV | cv.THRESH_OTSU);
+
+    // ---- 2. Контури: диск і його виріз ----
+    contours = new cv.MatVector();
+    hierarchy = new cv.Mat();
+    cv.findContours(bin, contours, hierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
+    const n = contours.size();
+    for (let i = 0; i < n; i++) contourMats.push(contours.get(i));
+    const hData = hierarchy.data32S;     // для кожного контуру: [наступний, попередній, перший вкладений, батько]
+
+    // Диск: найбільший зовнішній контур (без батька), центр якого в зоні прицілу
+    let discIdx = -1;
+    let discArea = 0;
+    for (let i = 0; i < n; i++) {
+      if (hData[i * 4 + 3] !== -1) continue;
+      const area = cv.contourArea(contourMats[i]);
+      if (area < MIN_DISC_AREA || area <= discArea) continue;
+      const rc = cv.boundingRect(contourMats[i]);
+      const aspect = rc.width / rc.height;
+      if (aspect < 0.6 || aspect > 1.7) continue;
+      if (!isInsideGuideRoi(rc.x + rc.width / 2, rc.y + rc.height / 2, W, H)) continue;
+      discIdx = i;
+      discArea = area;
+    }
+    if (discIdx < 0) return { ok: false, reason: 'диск не знайдено' };
+
+    // Виріз: найбільший контур, вкладений у диск
+    let holeIdx = -1;
+    let holeArea = 0;
+    for (let ci = hData[discIdx * 4 + 2]; ci >= 0; ci = hData[ci * 4 + 0]) {
+      const area = cv.contourArea(contourMats[ci]);
+      if (area > holeArea) { holeArea = area; holeIdx = ci; }
+    }
+    if (holeIdx < 0) return { ok: false, reason: 'квадратний виріз не знайдено' };
+
+    const holeRatio = holeArea / discArea;
     if (holeRatio < HOLE_AREA_RATIO_MIN || holeRatio > HOLE_AREA_RATIO_MAX) {
       return { ok: false, reason: 'виріз не того розміру' };
     }
 
-    // Виріз -> 4 кути
+    // ---- 3. Виріз -> 4 кути -> вигляд спереду ----
     const peri = cv.arcLength(contourMats[holeIdx], true);
     approx = new cv.Mat();
     cv.approxPolyDP(contourMats[holeIdx], approx, HOLE_APPROX_EPS * peri, true);
@@ -600,13 +419,8 @@ function decodeCandidate(blur, level, contourMats, holeIdx, parentIdx, info) {
       return { ok: false, reason: 'виріз не схожий на квадрат' };
     }
 
-    // Виріз підтверджено: цей кандидат справді диск. Якщо далі читання не вдасться,
-    // сусідній диск замість нього читати не можна (інакше вийде чужий код).
-    info.isDisc = true;
-
-    const verts = [];
-    for (let i = 0; i < 4; i++) verts.push({ x: approx.data32S[i * 2], y: approx.data32S[i * 2 + 1] });
-    const pts = refineSquareCorners(contourMats[holeIdx], verts) || verts;
+    const pts = [];
+    for (let i = 0; i < 4; i++) pts.push({ x: approx.data32S[i * 2], y: approx.data32S[i * 2 + 1] });
     const mx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
     const my = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
 
@@ -615,7 +429,6 @@ function decodeCandidate(blur, level, contourMats, holeIdx, parentIdx, info) {
     // почати, неважливо: квадрат симетричний, а код від повороту не залежить.
     pts.sort((p, q) => Math.atan2(p.y - my, p.x - mx) - Math.atan2(q.y - my, q.x - mx));
 
-    // Вирівнюємо сірий кадр: диск стає колом радіуса DST_R, виріз - квадратом
     const c = DST_SIZE / 2;
     const h = (DST_R * SQUARE_RATIO) / 2;
     srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
@@ -626,72 +439,36 @@ function decodeCandidate(blur, level, contourMats, holeIdx, parentIdx, info) {
     ]);
     M = cv.getPerspectiveTransform(srcTri, dstTri);
     warped = new cv.Mat();
-    cv.warpPerspective(blur, warped, M, new cv.Size(DST_SIZE, DST_SIZE),
-                       cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
+    cv.warpPerspective(bin, warped, M, new cv.Size(DST_SIZE, DST_SIZE),
+                       cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(0, 0, 0, 0));
 
-    // ---- Профіль радіуса: для кожного градуса шукаємо край диска ----
+    // ---- 4. Профіль радіуса: для кожного градуса шукаємо край диска ----
     const data = warped.data;
-    const maxR = DST_SIZE / 2 - 3;
-
-    // Яскравість у довільній точці (білінійна інтерполяція між пікселями)
-    const sample = (x, y) => {
-      const x0 = Math.floor(x);
-      const y0 = Math.floor(y);
-      const fx = x - x0;
-      const fy = y - y0;
-      const i = y0 * DST_SIZE + x0;
-      return data[i] * (1 - fx) * (1 - fy) + data[i + 1] * fx * (1 - fy) +
-             data[i + DST_SIZE] * (1 - fx) * fy + data[i + DST_SIZE + 1] * fx * fy;
-    };
-
+    const maxR = DST_SIZE / 2 - 2;
     const radii = new Array(360);
+    let invalid = 0;
     for (let deg = 0; deg < 360; deg++) {
       const cosA = Math.cos(deg * Math.PI / 180);
       const sinA = Math.sin(deg * Math.PI / 180);
-      const at = (rr) => sample(c + rr * cosA, c + rr * sinA);
-
-      let rr = DST_R * PROFILE_START_RATIO;
-      if (at(rr) >= level) { radii[deg] = 0; continue; }   // стартова точка не на матеріалі: кут невідомий
-
-      // Йдемо назовні, поки яскравість нижча за поріг (диск темний, фон світлий)
-      let v0 = at(rr);
-      let v1 = v0;
-      while (rr + PROFILE_STEP < maxR) {
-        v1 = at(rr + PROFILE_STEP);
-        if (v1 >= level) break;
-        rr += PROFILE_STEP;
-        v0 = v1;
-      }
-      // Точніше положення межі: лінійно між двома останніми точками
-      const frac = (v1 > v0) ? Math.min(1, Math.max(0, (level - v0) / (v1 - v0))) : 0;
-      radii[deg] = rr + frac * PROFILE_STEP;
+      const px = (rr) => data[Math.round(c + rr * sinA) * DST_SIZE + Math.round(c + rr * cosA)];
+      let rr = Math.floor(DST_R * PROFILE_START_RATIO);
+      if (px(rr) < 128) { radii[deg] = 0; invalid++; continue; }   // стартова точка не на матеріалі
+      while (rr < maxR && px(rr + 1) >= 128) rr++;
+      radii[deg] = rr;
     }
+    if (invalid > 5) return { ok: false, reason: 'профіль диска пошкоджено' };
 
-    // Звичайний радіус диска = медіана по всіх відомих кутах
-    const known = radii.filter(r => r > 0).sort((p, q) => p - q);
-    if (known.length < 180) return { ok: false, reason: 'профіль диска пошкоджено' };
-    const rRef = known[Math.floor(known.length / 2)];
+    // Звичайний радіус диска = медіана (ямок небагато, тож медіана їх не помічає)
+    const sorted = radii.filter(r => r > 0).sort((p, q) => p - q);
+    const rRef = sorted[Math.floor(sorted.length / 2)];
     if (Math.abs(rRef / DST_R - 1) > RADIUS_CHECK_TOL) {
       return { ok: false, reason: 'пропорції диска не збігаються' };
     }
 
-    // ---- Забруднені кути: там, де до диска прилягає чужа графіка ----
-    // Спершу місцева норма за всіма кутами, потім кути, що помітно її перевищують,
-    // позначаються забрудненими, і норма перераховується вже без них (двічі).
-    let dirty = new Array(360).fill(false);
-    let base = localBaseline(radii, dirty, rRef);
-    for (let pass = 0; pass < 2; pass++) {
-      dirty = radii.map((r, i) => r === 0 || r > base[i] * (1 + ATTACH_TOL));
-      base = localBaseline(radii, dirty, rRef);
-    }
-    dirty = radii.map((r, i) => r === 0 || r > base[i] * (1 + ATTACH_TOL));
-    if (dirty.filter(Boolean).length > MAX_DIRTY_DEG) {
-      return { ok: false, reason: 'забагато чужої графіки навколо диска' };
-    }
-
-    // ---- Ямки: суцільні відрізки чистих кутів, де радіус менший за місцевий поріг ----
-    const isPit = radii.map((r, i) => (!dirty[i] && r < base[i] * PIT_THRESHOLD));
-    const start = isPit.indexOf(false);
+    // ---- 5. Ямки: суцільні відрізки, де радіус менший за поріг ----
+    const limit = rRef * PIT_THRESHOLD;
+    const isPit = radii.map(r => (r > 0 && r < limit));
+    let start = isPit.indexOf(false);
     if (start < 0) return { ok: false, reason: 'ямки не знайдено' };
 
     // Рухаємось від градуса, що точно не в ямці, щоб кільце не розрізало ямку навпіл
@@ -702,24 +479,8 @@ function decodeCandidate(blur, level, contourMats, holeIdx, parentIdx, info) {
       if (inPit && runStart < 0) runStart = k;
       if (!inPit && runStart >= 0) {
         const len = k - runStart;
-        if (len >= 4) {          // коротші відрізки - дрібний шум
-          // Перевіряємо форму ямки: ширина, глибина (найменший радіус
-          // відносно норми) і симетрія (найглибша точка посередині)
-          let rMin = Infinity;
-          let minAt = 0;
-          for (let t = 0; t < len; t++) {
-            const a = (start + runStart + t) % 360;
-            if (radii[a] < rMin) { rMin = radii[a]; minAt = t; }
-          }
-          const mid = (len - 1) / 2;
-          const depth = rMin / base[(start + runStart + Math.floor(mid)) % 360];
-          if (len < MIN_PIT_WIDTH_DEG || len > MAX_PIT_WIDTH_DEG ||
-              depth < PIT_DEPTH_MIN || depth > PIT_DEPTH_MAX ||
-              Math.abs(minAt - mid) > PIT_SYMMETRY_TOL_DEG) {
-            return { ok: false, reason: 'форма ямки не збігається (частково закрита?)' };
-          }
-          centers.push(runStart + mid);
-        }
+        if (len > MAX_PIT_WIDTH_DEG) return { ok: false, reason: 'ямка завширока' };
+        if (len >= MIN_PIT_WIDTH_DEG) centers.push(runStart + (len - 1) / 2);
         runStart = -1;
       }
     }
@@ -727,7 +488,7 @@ function decodeCandidate(blur, level, contourMats, holeIdx, parentIdx, info) {
       return { ok: false, reason: `ямок: ${centers.length} (потрібно ${SECTORS})` };
     }
 
-    // ---- Проміжки -> відбиток -> код диска ----
+    // ---- 6. Проміжки -> відбиток -> код диска ----
     const q = [];
     for (let i = 0; i < SECTORS; i++) {
       const next = (i + 1 < SECTORS) ? centers[i + 1] : centers[0] + 360;
@@ -744,87 +505,15 @@ function decodeCandidate(blur, level, contourMats, holeIdx, parentIdx, info) {
     return { ok: true, code };
 
   } finally {
-    [approx, srcTri, dstTri, M, warped].forEach(m => {
-      if (m && typeof m.delete === 'function') m.delete();
-    });
-  }
-}
-
-function detectDisc(imgData, W, H) {
-  if (!openCvReady) return { ok: false, reason: 'OpenCV ще завантажується...' };
-
-  let src, gray, blur, roiMat, tmp, bin, contours, hierarchy;
-  const contourMats = [];
-
-  try {
-    // ---- 1. Сірий, розмиття, поріг Оцу по зоні прицілу ----
-    src = cv.matFromImageData(imgData);
-    gray = new cv.Mat();
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    blur = new cv.Mat();
-    cv.GaussianBlur(gray, blur, new cv.Size(BLUR_SIZE, BLUR_SIZE), 0);
-
-    const g = getGuideGeometry(W, H);
-    const rx = Math.max(0, Math.floor(g.cx - g.halfW * SCAN_ROI_MARGIN));
-    const ry = Math.max(0, Math.floor(g.cy - g.halfH * SCAN_ROI_MARGIN));
-    const rw = Math.min(W - rx, Math.ceil(g.halfW * 2 * SCAN_ROI_MARGIN));
-    const rh = Math.min(H - ry, Math.ceil(g.halfH * 2 * SCAN_ROI_MARGIN));
-    roiMat = blur.roi(new cv.Rect(rx, ry, rw, rh));
-    tmp = new cv.Mat();
-    const level = cv.threshold(roiMat, tmp, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
-
-    // Диск (темний) стає білим на чорному
-    bin = new cv.Mat();
-    cv.threshold(blur, bin, level, 255, cv.THRESH_BINARY_INV);
-
-    // ---- 2. Контури: шукаємо квадратні виїмки (дірки) ----
-    contours = new cv.MatVector();
-    hierarchy = new cv.Mat();
-    cv.findContours(bin, contours, hierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_NONE);
-    const n = contours.size();
-    for (let i = 0; i < n; i++) contourMats.push(contours.get(i));
-    const hData = hierarchy.data32S;     // для кожного контуру: [наступний, попередній, перший вкладений, батько]
-
-    const minParentArea = W * H * MIN_DISC_AREA_FRACTION;
-    const cands = [];
-    for (let i = 0; i < n; i++) {
-      const parent = hData[i * 4 + 3];
-      if (parent < 0) continue;                               // нас цікавлять лише дірки
-      const area = cv.contourArea(contourMats[i]);
-      if (area < W * H * HOLE_MIN_AREA_FRACTION || area > W * H * HOLE_MAX_AREA_FRACTION) continue;
-      const rc = cv.boundingRect(contourMats[i]);
-      const aspect = rc.width / rc.height;
-      if (aspect < 0.5 || aspect > 2) continue;
-      if (area / (rc.width * rc.height) < HOLE_MIN_FILL) continue;      // не схоже на квадрат
-      const bx = rc.x + rc.width / 2;
-      const by = rc.y + rc.height / 2;
-      if (!isInsideGuideRoi(bx, by, W, H)) continue;
-      if (cv.contourArea(contourMats[parent]) < minParentArea) continue;  // навколо надто мала фігура
-      cands.push({ hole: i, parent, dist: Math.hypot(bx - g.cx, by - g.cy) });
-    }
-    if (cands.length === 0) return { ok: false, reason: 'диск не знайдено' };
-
-    // Найближчий до центра прицілу іде першим: читаємо той диск, на який навели.
-    // Кандидат, що не вийшов квадратом, пропускається. Перший справжній диск
-    // читаємо, і якщо не вийшло, кадр відкидаємо: сусідній диск не читаємо.
-    cands.sort((p, q) => p.dist - q.dist);
-    let firstFail = null;
-    for (let k = 0; k < Math.min(cands.length, MAX_CANDIDATES); k++) {
-      const info = { isDisc: false };
-      const res = decodeCandidate(blur, level, contourMats, cands[k].hole, cands[k].parent, info);
-      if (res.ok || info.isDisc) return res;
-      if (!firstFail) firstFail = res;       // причину показуємо для найближчого кандидата
-    }
-    return firstFail;
-
-  } finally {
     // Звільняємо все, що створили, навіть якщо вище сталася помилка
     contourMats.forEach(m => { if (m && typeof m.delete === 'function') m.delete(); });
-    [src, gray, blur, roiMat, tmp, bin, contours, hierarchy].forEach(m => {
+    [src, gray, blur, bin, contours, hierarchy, approx, srcTri, dstTri, M, warped].forEach(m => {
       if (m && typeof m.delete === 'function') m.delete();
     });
   }
 }
+
+
 
 /* =====================================================================
    КАМЕРА І ЦИКЛ КАДРІВ
@@ -835,26 +524,25 @@ let scanTimer = null;      // таймер аналізу кадрів
 let scanCanvas = null;     // один канвас для кадрів, створюється один раз
 let scanCtx = null;
 
-// Стан сканування: іде лише після натискання кнопки
-let scanning = false;
+let scanning = false;      // аналіз кадрів іде лише у стані "scanning"
 let lastCode = null;       // останній розпізнаний код
 let streak = 0;            // скільки кадрів поспіль він повторюється
 
+function setStatus(text) {
+  document.getElementById('msgText').textContent = text;
+}
+
+// Повертає '' якщо камеру запущено, інакше текст помилки
 async function startCamera() {
-  if (camStream) return;
+  if (camStream) return '';
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setStatus('Цей браузер не підтримує камеру.');
-      return;
+      return 'Камера доступна лише в браузері з підтримкою камери та через https або localhost.';
     }
     const video = document.getElementById('camVideo');
-
-    // Задня камера, якщо є; кадр бажаний якомога більший (центральний квадрат
-    // з нього йде в аналіз)
     camStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 720 }, height: { ideal: 720 } }
     });
-
     video.srcObject = camStream;
     await new Promise((resolve) => {
       if (video.readyState >= 1) { resolve(); return; }
@@ -862,18 +550,21 @@ async function startCamera() {
     });
     await video.play();
 
-    watchGuideResize();
+    // Якщо систему чи користувач вимкнули камеру посеред сканування
+    camStream.getVideoTracks().forEach((t) => {
+      t.addEventListener('ended', () => abortScan('Камеру вимкнено. Запусти сканування ще раз.'));
+    });
+
     scanTimer = setInterval(scanFrame, SCAN_INTERVAL_MS);
+    return '';
   } catch (e) {
-    if (e.name === 'NotAllowedError') {
-      setStatus('Немає доступу до камери. Дозвольте його в налаштуваннях браузера.');
-    } else {
-      setStatus('Не вдалося запустити камеру: ' + e.message);
-    }
+    teardownCamera();
+    if (e.name === 'NotAllowedError') return 'Немає доступу до камери. Дозвольте його в налаштуваннях браузера.';
+    if (e.name === 'NotFoundError') return 'Камеру не знайдено.';
+    return 'Не вдалося запустити камеру: ' + (e.message || e.name);
   }
 }
 
-// Зупиняє камеру й аналіз (знадобиться й тоді, коли диск буде впізнано)
 function teardownCamera() {
   if (camStream) {
     camStream.getTracks().forEach(t => t.stop());
@@ -883,12 +574,9 @@ function teardownCamera() {
     clearInterval(scanTimer);
     scanTimer = null;
   }
-  unwatchGuideResize();
-
   const video = document.getElementById('camVideo');
   video.pause();
   video.srcObject = null;
-  clearGuide();
 }
 
 // Один крок циклу: центральний квадрат відео -> канвас -> детектор
@@ -937,35 +625,301 @@ function scanFrame() {
   if (streak >= CONFIRM_STREAK) finishScan(det.code);
 }
 
-// Кнопка "Сканувати": вмикає камеру (якщо вона вимкнена) і аналіз кадрів
-async function startScanning() {
-  const btn = document.getElementById('scanBtn');
-  btn.disabled = true;
-  if (!camStream) await startCamera();
-  if (!camStream) { btn.disabled = false; return; }   // камеру не дали, статус уже виведено
+
+
+/* =====================================================================
+   ІНТЕРФЕЙС: ШЕСТЕРНІ, СЛАЙДЕР, ПЕРЕХОДИ
+   Стани: idle (головна шестерня внизу, у зчепленні з нижньою парою) ->
+   launching (летить вгору, зчіплюється з верхньою парою, слайдер везе
+   поле вліво, камеру вправо) -> scanning -> returning (слайдер назад,
+   шестерня відскакує вниз і зчіплюється з нижньою парою) -> idle.
+   Зубці зчіплюються по-справжньому: кут головної шестерні при посадці
+   підганяється так, щоб зуби входили у западини сусідніх шестерень.
+   ===================================================================== */
+
+const GEAR_MODULE = 3.75;
+const MAIN_TEETH = 16, MAIN_PITCH = MAIN_TEETH * GEAR_MODULE, HOME_Y = 250;
+const TOOTH_STEP = 360 / MAIN_TEETH;       // 22.5 градуса: період зубців головної шестерні
+const IDLE_SPEED = 0.3, SCAN_SPEED = 0.6;  // градусів за кадр
+const SLIDE_ROT = 150;                     // на скільки градусів повертається шестерня за час слайду
+const VB = { y: -450, w: 620, h: 900 };    // має збігатися з viewBox у розмітці
+
+// Нижня пара (як було). offset - фаза зубців у зчепленні з головною шестернею внизу
+const BOTTOM = [
+  { id: 'gear2', teeth: 8,  x: 81.5, y: 290,   offset: 22.5 },
+  { id: 'gear3', teeth: 12, x: -93,  y: 301.5, offset: 15 }
+];
+// Верхня пара: дзеркальна, стоїть над головною шестернею, коли вона зверху.
+// x, y, offset рахуються в layout()
+const TOP = [
+  { id: 'gearT2', teeth: 8,  dx: 81.5, dy: -40,   axis: 'axT2', dot: 'centerT2' },
+  { id: 'gearT3', teeth: 12, dx: -93,  dy: -51.5, axis: 'axT3', dot: 'centerT3' }
+];
+
+let state = 'idle';
+let mainY = HOME_Y, mainA = 0;     // положення й кут головної шестерні
+let botA = 0, topA = 0;            // "ведучі кути" нижньої і верхньої пар
+let botShift = 0, topShift = 0;
+let bottomCoupled = true, topCoupled = false;
+let topLandY = -100;               // де головна шестерня стає під верхню пару
+let slideP = 0;                    // 0: видно поле, 1: видно камеру
+let pointerDown = false, pointerStartY = 0;
+
+const $ = (id) => document.getElementById(id);
+const gearSvg = $('gearSvg'), gear1 = $('gear1'), center1 = $('center1');
+const axisBottom = $('axisGroup'), axisTop = $('axisTop');
+const infoCard = $('infoCard'), scannerWindow = $('scannerWindow');
+const topSlot = $('topSlot'), stage = $('stage');
+
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+function tween(ms, step) {
+  return new Promise((resolve) => {
+    const t0 = performance.now();
+    (function frame(now) {
+      const p = Math.min((now - t0) / ms, 1);
+      step(p);
+      if (p < 1) requestAnimationFrame(frame); else resolve();
+    })(t0);
+  });
+}
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+const easeInOut = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const easeOutBack = (t) => { const c1 = 0.45, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+
+// Найближчий кут, не менший за min (або не більший за max), що збігається з ref по зубцю
+const alignedUp = (min, ref) => ref + TOOTH_STEP * Math.ceil((min - ref) / TOOTH_STEP);
+const alignedDown = (max, ref) => ref + TOOTH_STEP * Math.floor((max - ref) / TOOTH_STEP);
+
+// Фаза зубців малої шестерні, щоб вона зчіплювалася з головною (кут 0)
+// у напрямку (dx, dy) від центра головної
+function meshOffset(teeth, dx, dy) {
+  const theta = Math.atan2(dy, dx) * 180 / Math.PI;
+  const off = ((MAIN_TEETH + teeth) * theta + 180 * teeth - 90) / teeth;
+  const period = 360 / teeth;
+  return ((off % period) + period) % period;
+}
+
+function generateGearPath(cx, cy, pitchRadius, module, teethCount, holeRadius) {
+  const angleStep = (Math.PI * 2) / teethCount;
+  const outerRadius = pitchRadius + module * 0.8;
+  const innerRadius = pitchRadius - module * 1.0;
+  const toothWidth = angleStep * 0.25;
+  const points = [];
+  for (let i = 0; i < teethCount; i++) {
+    const a = i * angleStep;
+    points.push(`${(cx + innerRadius * Math.cos(a)).toFixed(2)},${(cy + innerRadius * Math.sin(a)).toFixed(2)}`);
+    points.push(`${(cx + outerRadius * Math.cos(a + toothWidth)).toFixed(2)},${(cy + outerRadius * Math.sin(a + toothWidth)).toFixed(2)}`);
+    points.push(`${(cx + outerRadius * Math.cos(a + 2 * toothWidth)).toFixed(2)},${(cy + outerRadius * Math.sin(a + 2 * toothWidth)).toFixed(2)}`);
+    points.push(`${(cx + innerRadius * Math.cos(a + 3 * toothWidth)).toFixed(2)},${(cy + innerRadius * Math.sin(a + 3 * toothWidth)).toFixed(2)}`);
+  }
+  const outerPath = `M ${points.join(' L ')} Z`;
+  const holePath = `M ${cx - holeRadius},${cy} A ${holeRadius},${holeRadius} 0 1,0 ${cx + holeRadius},${cy} A ${holeRadius},${holeRadius} 0 1,0 ${cx - holeRadius},${cy} Z`;
+  return `${outerPath} ${holePath}`;
+}
+const setGearPath = (id, x, y, teeth) => {
+  const r = teeth * GEAR_MODULE;
+  $(id).setAttribute('d', generateGearPath(x, y, r, GEAR_MODULE, teeth, r * 0.35));
+};
+
+/* ---- Координати: екран <-> viewBox шестерень ---- */
+function svgMetrics() {
+  const r = gearSvg.getBoundingClientRect();
+  const s = Math.min(r.width / VB.w, r.height / VB.h);
+  return { r, s, offY: (r.height - VB.h * s) / 2 };
+}
+function screenYToSvg(y) {
+  const m = svgMetrics();
+  return (y - m.r.top - m.offY) / m.s + VB.y;
+}
+
+/* ---- Слайдер: поле їде вліво, камера в'їжджає справа (p: 0 -> 1) ---- */
+function setSlide(p) {
+  slideP = p;
+  const off = window.innerWidth / 2 + 230;
+  infoCard.style.transform = `translateX(${(-p * off).toFixed(1)}px)`;
+  scannerWindow.style.transform = `translateX(${((1 - p) * off).toFixed(1)}px)`;
+}
+
+/* ---- Розкладка: верхній слот, розмір вікна, верхня пара шестерень ---- */
+function layout() {
+  const m = svgMetrics();
+  topSlot.style.setProperty('--slot-top', Math.max(10, Math.round(window.innerHeight * 0.05)) + 'px');
+  topSlot.style.setProperty('--slot-h', '200px');
+  // Слот не опускається нижче рівня, де головна шестерня ще не наїжджає на нижню пару
+  const yMax = m.r.top + m.offY + (78 - VB.y) * m.s;
+  const H = Math.max(120, Math.min(200, yMax - topSlot.getBoundingClientRect().top));
+  topSlot.style.setProperty('--slot-h', H + 'px');
+  topSlot.style.setProperty('--win', Math.min(150, H - 24) + 'px');
+
+  topLandY = screenYToSvg(topSlot.getBoundingClientRect().bottom) + 112;
+  TOP.forEach((g) => {
+    g.x = g.dx;
+    g.y = topLandY + g.dy;
+    g.offset = meshOffset(g.teeth, g.dx, g.dy);
+    setGearPath(g.id, g.x, g.y, g.teeth);
+    const ax = $(g.axis);
+    ax.setAttribute('x1', 0); ax.setAttribute('y1', topLandY);
+    ax.setAttribute('x2', g.x); ax.setAttribute('y2', g.y);
+    $(g.dot).setAttribute('cx', g.x); $(g.dot).setAttribute('cy', g.y);
+  });
+  if (topCoupled) mainY = topLandY;
+  setSlide(slideP);
+}
+
+/* ---- Малювання шестерень ---- */
+function render() {
+  gear1.setAttribute('transform', `translate(0 ${(mainY - HOME_Y).toFixed(2)}) rotate(${mainA.toFixed(2)} 0 ${HOME_Y})`);
+  center1.setAttribute('cy', mainY.toFixed(2));
+  BOTTOM.forEach((g) => {
+    const a = g.offset - (MAIN_TEETH / g.teeth) * botA;
+    $(g.id).setAttribute('transform', `rotate(${a.toFixed(2)} ${g.x} ${g.y})`);
+  });
+  TOP.forEach((g) => {
+    const a = g.offset - (MAIN_TEETH / g.teeth) * topA;
+    $(g.id).setAttribute('transform', `rotate(${a.toFixed(2)} ${g.x} ${g.y})`);
+  });
+}
+
+function frame() {
+  if (state === 'idle' && !pointerDown) mainA += IDLE_SPEED;
+  else if (state === 'scanning') mainA += SCAN_SPEED;
+  if (bottomCoupled) botA = mainA - botShift;   // у зчепленні пара крутиться разом з головною
+  if (topCoupled) topA = mainA - topShift;
+  render();
+  requestAnimationFrame(frame);
+}
+
+function showCard(title, desc, code) {
+  $('cardTitle').textContent = title;
+  $('cardDesc').textContent = desc;
+  const c = $('cardCode');
+  if (code) { c.textContent = code; c.hidden = false; } else { c.hidden = true; }
+}
+function setGearLabel() {
+  gear1.setAttribute('aria-label', state === 'scanning' ? 'Вимкнути камеру' : 'Запустити сканування');
+}
+
+/* ---- Запуск: шестерня летить угору, зчіплюється, слайдер везе камеру ---- */
+async function launch() {
+  if (state !== 'idle') return;
+  state = 'launching';
+  bottomCoupled = false;                          // нижня пара зупиняється
+  axisBottom.classList.add('fade-out');
+
+  const y0 = mainY, a0 = mainA;
+  const aEnd = alignedUp(a0 + 300, topA);         // у фазі з верхньою парою
+  await tween(950, (p) => {
+    const e = easeOutCubic(p);
+    mainY = y0 + (topLandY - y0) * e;
+    mainA = a0 + (aEnd - a0) * e;
+  });
+  mainY = topLandY; mainA = aEnd;
+  topShift = mainA - topA;                        // зчеплення
+  topCoupled = true;
+  axisTop.classList.remove('fade-out');
+
+  const a1 = mainA;
+  await tween(700, (p) => {                       // слайдер у такт обертанню
+    const e = easeInOut(p);
+    setSlide(e);
+    mainA = a1 + SLIDE_ROT * e;
+  });
+  setSlide(1);
+  scannerWindow.classList.add('active');
+
+  const err = await startCamera();
+  if (err) { await endSession('Камера недоступна', err); return; }
 
   lastCode = null;
   streak = 0;
+  state = 'scanning';
+  setGearLabel();
   scanning = true;
-  btn.textContent = 'Сканую...';
-  setStatus('сканування...');
+  setStatus('наведи диск у рамку');
 }
 
-// Диск розпізнано: зупиняємо аналіз і виводимо номер
-function finishScan(code) {
+/* ---- Кінець (результат, скасування, помилка): слайдер назад, шестерня
+        відскакує вниз і зчіплюється з нижньою парою ---- */
+async function endSession(title, desc, code) {
+  if (state === 'returning') return;
+  state = 'returning';
   scanning = false;
-  teardownCamera();                      // номер знайдено, камера більше не потрібна
-  const btn = document.getElementById('scanBtn');
-  btn.disabled = false;
-  btn.textContent = 'Сканувати';
-  setResult(code);
+  teardownCamera();
+  setStatus('');
+  scannerWindow.classList.remove('active');
+  showCard(title, desc, code);                    // поле зараз за екраном
+
+  const p0 = slideP, a1 = mainA;
+  await tween(700, (p) => {
+    const e = easeInOut(p);
+    setSlide(p0 * (1 - e));
+    mainA = a1 - SLIDE_ROT * p0 * e;
+  });
+  setSlide(0);
+
+  topCoupled = false;                             // верхня пара зупиняється
+  axisTop.classList.add('fade-out');
+  const y0 = mainY, a0 = mainA;
+  const aEnd = alignedDown(a0 - 300, botA);       // у фазі з нижньою парою
+  await tween(1000, (p) => {
+    mainY = y0 + (HOME_Y - y0) * easeOutBack(p);
+    mainA = a0 + (aEnd - a0) * easeOutCubic(p);
+  });
+  mainY = HOME_Y; mainA = aEnd;
+  botShift = mainA - botA;                        // зчеплення внизу
+  bottomCoupled = true;
+  axisBottom.classList.remove('fade-out');
+  state = 'idle';
+  setGearLabel();
 }
 
-// Камеру обов'язково відпускаємо, коли сторінку закрито чи згорнуто
-window.addEventListener('pagehide', teardownCamera);
+function finishScan(code) {
+  endSession('Номер диска', 'Свайпни вгору або торкнися шестерні для нового сканування', code);
+}
+function cancelScan() {
+  if (state !== 'scanning') return;
+  endSession('Система сканування', 'Свайпни вгору або торкнися шестерні для запуску');
+}
+function abortScan(msg) {
+  if (state !== 'scanning') return;
+  endSession('Сканування перервано', msg);
+}
+const toggleScan = () => { if (state === 'idle') launch(); else if (state === 'scanning') cancelScan(); };
 
-// Камера НЕ запускається сама при відкритті сторінки: її вмикає кнопка "Сканувати"
-document.getElementById('scanBtn').addEventListener('click', startScanning);
+/* ---- Керування (миша, дотик, перо): угору запускає, униз вимикає ---- */
+stage.addEventListener('pointerdown', (e) => {
+  if (state !== 'idle' && state !== 'scanning') return;
+  pointerDown = true;
+  pointerStartY = e.clientY;
+});
+window.addEventListener('pointermove', (e) => {
+  if (!pointerDown) return;
+  const dy = e.clientY - pointerStartY;
+  if (state === 'idle' && dy < -20) { pointerDown = false; launch(); }
+  else if (state === 'scanning' && dy > 20) { pointerDown = false; cancelScan(); }
+});
+const releasePointer = () => { pointerDown = false; };
+window.addEventListener('pointerup', releasePointer);
+window.addEventListener('pointercancel', releasePointer);
+
+gear1.addEventListener('click', toggleScan);
+gear1.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleScan(); }
+});
+
+/* ---- Камеру обов'язково відпускаємо, коли сторінку закрито чи згорнуто ---- */
+window.addEventListener('pagehide', teardownCamera);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) abortScan('Сторінку згорнуто, камеру вимкнено. Запусти сканування ще раз.');
+});
+window.addEventListener('pageshow', (e) => { if (e.persisted) location.reload(); });
+window.addEventListener('resize', layout);
+
+/* ---- Старт ---- */
+setGearPath('gear1', 0, HOME_Y, MAIN_TEETH);
+BOTTOM.forEach((g) => setGearPath(g.id, g.x, g.y, g.teeth));
+layout();
+requestAnimationFrame(frame);
 
 </script>
 </body>
