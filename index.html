@@ -114,13 +114,11 @@ html, body {
 
 .scanner-corner {
   position: absolute; width: 14px; height: 14px; border: 0 solid #fff; z-index: 5;
-  --gap: calc(-4px - var(--travel, 5px) * (1 - var(--k, 0)));
-  transition: top .2s ease, bottom .2s ease, left .2s ease, right .2s ease;
 }
-.tl { top: var(--gap); left: var(--gap); border-width: 3px 0 0 3px; }
-.tr { top: var(--gap); right: var(--gap); border-width: 3px 3px 0 0; }
-.bl { bottom: var(--gap); left: var(--gap); border-width: 0 0 3px 3px; }
-.br { bottom: var(--gap); right: var(--gap); border-width: 0 3px 3px 0; }
+.tl { top: -4px; left: -4px; border-width: 3px 0 0 3px; }
+.tr { top: -4px; right: -4px; border-width: 3px 3px 0 0; }
+.bl { bottom: -4px; left: -4px; border-width: 0 0 3px 3px; }
+.br { bottom: -4px; right: -4px; border-width: 0 3px 3px 0; }
 
 @media (prefers-reduced-motion: reduce) { .scan-beam { animation: none; top: 50%; } }
 </style>
@@ -1036,7 +1034,6 @@ async function scanOnce(tok) {
   if (!det.ok) {
     lastCode = null;
     streak = 0;
-    setProgress(0);
     return;
   }
 
@@ -1047,7 +1044,6 @@ async function scanOnce(tok) {
     lastCode = det.code;
     streak = 1;
   }
-  setProgress(Math.min(1, streak / CONFIRM_STREAK));
   if (streak >= CONFIRM_STREAK) finishScan(det.code);
 }
 
@@ -1064,13 +1060,12 @@ async function scanOnce(tok) {
 const GEAR_MODULE = 3.75;
 const MAIN_TEETH = 16, MAIN_PITCH = MAIN_TEETH * GEAR_MODULE, HOME_Y = 250;
 const TOOTH_STEP = 360 / MAIN_TEETH;       // 22.5 градуса: період зубців головної шестерні
-const IDLE_SPEED = 0.3, SCAN_SPEED = 0.6;  // градусів за кадр
+const IDLE_SPEED = 0.3;                    // градусів за кадр у стані очікування
 const SLIDE_ROT = 150;                     // на скільки градусів повертається шестерня за час слайду
 const VB = { y: -450, w: 620, h: 900 };    // має збігатися з viewBox у розмітці
 
 const WINDOW_SIZE = 220;                   // сторона вікна камери, px
 const SLOT_H_MAX = WINDOW_SIZE + 30;       // висота верхнього слота
-const CORNER_TRAVEL_PX = 5;                // наскільки далі від рамки стартують кутники
 
 // Нижня пара (як було). offset - фаза зубців у зчепленні з головною шестернею внизу
 const BOTTOM = [
@@ -1161,11 +1156,6 @@ function screenYToSvg(y) {
 }
 
 /* ---- Слайдер: поле їде вліво, камера в'їжджає справа (p: 0 -> 1) ---- */
-// Прогрес розпізнавання 0..1: кутники під'їжджають до рамки
-function setProgress(k) {
-  scannerWindow.style.setProperty('--k', k.toFixed(2));
-}
-
 function setSlide(p) {
   slideP = p;
   const off = window.innerWidth / 2 + 230;
@@ -1197,6 +1187,7 @@ function layout() {
   });
   if (topCoupled) mainY = topLandY;
   setSlide(slideP);
+  render();                                       // і коли цикл анімації зупинено
 }
 
 /* ---- Малювання шестерень ---- */
@@ -1218,12 +1209,20 @@ function render() {
   });
 }
 
+// Цикл анімації не працює, поки йде сканування: шестерні стоять у зчепленні,
+// а всі ресурси лишаються камері й розпізнаванню. Відновлюється в endSession().
+let loopRunning = false;
 function frame() {
   if (state === 'idle' && !pointerDown) mainA += IDLE_SPEED;
-  else if (state === 'scanning') mainA += SCAN_SPEED;
   if (bottomCoupled) botA = mainA - botShift;   // у зчепленні пара крутиться разом з головною
   if (topCoupled) topA = mainA - topShift;
-  render();
+  render();                                     // останній кадр перед зупинкою теж малюється
+  if (state === 'scanning') { loopRunning = false; return; }
+  requestAnimationFrame(frame);
+}
+function ensureLoop() {
+  if (loopRunning) return;
+  loopRunning = true;
   requestAnimationFrame(frame);
 }
 
@@ -1273,7 +1272,6 @@ async function launch() {
   state = 'scanning';
   setGearLabel();
   scanning = true;
-  setProgress(0);
 }
 
 /* ---- Кінець (результат, скасування, помилка): слайдер назад, шестерня
@@ -1281,9 +1279,9 @@ async function launch() {
 async function endSession(title, desc, code) {
   if (state === 'returning') return;
   state = 'returning';
+  ensureLoop();                                   // анімація знову працює
   scanning = false;
   teardownCamera();
-  setProgress(0);
   scannerWindow.classList.remove('active');
   showCard(title, desc, code);                    // поле зараз за екраном
 
@@ -1354,11 +1352,10 @@ window.addEventListener('pageshow', (e) => { if (e.persisted) location.reload();
 window.addEventListener('resize', layout);
 
 /* ---- Старт ---- */
-scannerWindow.style.setProperty('--travel', CORNER_TRAVEL_PX + 'px');
 setGearPath('gear1', 0, HOME_Y, MAIN_TEETH);
 BOTTOM.forEach((g) => setGearPath(g.id, g.x, g.y, g.teeth));
 layout();
-requestAnimationFrame(frame);
+ensureLoop();
 startWorker();
 
 
